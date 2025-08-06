@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/qjson-targets.cmake")
+
+add_library(qlib::json ALIAS qjson)
+
+check_required_components(qjson)
