@@ -105,7 +105,11 @@ public:
     [[nodiscard]] constexpr size_type size() const noexcept { return _size; }
 
     [[nodiscard]] constexpr self substr(size_type pos, size_type n = npos) const noexcept {
-        return self(data() + pos, data() + std::min(n, size() - pos));
+        if (unlikely(pos > size())) {
+            return self();
+        }
+        size_type len = (n == npos || pos + n > size()) ? size() - pos : n;
+        return self(data() + pos, data() + pos + len);
     }
 
     [[nodiscard]] constexpr bool_t starts_with(const_pointer o) const noexcept {
@@ -121,7 +125,7 @@ public:
     }
 
     [[nodiscard]] constexpr bool_t ends_with(self const& o) const noexcept {
-        return substr(size() - o.size(), o.size()) == o;
+        return size() >= o.size() && substr(size() - o.size(), o.size()) == o;
     }
 
     [[nodiscard]] constexpr bool_t operator==(const_pointer o) const noexcept {
@@ -157,7 +161,7 @@ public:
     }
 #endif
 
-    [[nodiscard]] operator bool_t() const noexcept { return !empty(); }
+    [[nodiscard]] explicit operator bool_t() const noexcept { return !empty(); }
 
     template <class T,
               class Enable = std::enable_if_t<is_one_of_v<T,
@@ -246,7 +250,7 @@ public:
 
     explicit value(size_type capacity) : _capacity(capacity) {
         if (likely(capacity > 0)) {
-            _impl = uptr<Char[]>(new Char[capacity]);
+            _impl = uptr<Char[]>(new Char[capacity + 1u]);
         }
     }
 
@@ -338,8 +342,6 @@ public:
 
     [[nodiscard]] constexpr const_reference back() const noexcept { return *(data() + size() - 1); }
 
-    [[nodiscard]] constexpr pointer c_str() noexcept { return data(); }
-
     [[nodiscard]] constexpr const_pointer c_str() const noexcept { return data(); }
 
     [[nodiscard]] constexpr bool_t starts_with(self const& o) const noexcept {
@@ -416,7 +418,7 @@ public:
 
     template <class T>
     [[nodiscard]] T to() const {
-        return static_cast<string_view_type>(*this).to<T>();
+        return static_cast<string_view_type>(*this).template to<T>();
     }
 };
 

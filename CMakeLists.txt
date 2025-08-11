@@ -5,11 +5,15 @@ project(qjson C CXX)
 endif()
 
 add_library(qjson INTERFACE)
-add_library(qlib::json ALIAS qjson)
+
 set_target_properties(qjson PROPERTIES 
     INTERFACE_INCLUDE_DIRECTORIES 
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>;$<INSTALL_INTERFACE:include>"
 )
+
+add_library(qlib::json ALIAS qjson)
+
+enable_testing()
 
 option(BUILD_EXAMPLES "Build examples" ON)
 
@@ -22,8 +26,13 @@ foreach(example ${examples})
 endforeach()
 endif()
 
-install(TARGETS qjson EXPORT qjson)
-install(DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/include DESTINATION .)
+install(DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/include/ DESTINATION include)
+
+install(TARGETS qjson 
+        EXPORT qjson
+        INCLUDES DESTINATION include)
+
+
 # 安装导出文件
 install(EXPORT qjson 
         FILE qjson-targets.cmake

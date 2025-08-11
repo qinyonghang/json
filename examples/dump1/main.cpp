@@ -113,16 +113,16 @@ int32_t main(int32_t argc, char* argv[]) {
             {"configurePreset", "dlinux"},
             {"configuration", "Debug"},
         });
-        auto buildPresets = json_type::array({
+        auto value = json_type::object({});
+        value["version"] = 10;
+        value["cmakeMinimumRequired"] =
+            json_type::object({{"major", 3}, {"minor", 23}, {"patch", 0}});
+        value["configurePresets"] = std::move(configurePresets);
+        value["buildPresets"] = json_type::array({
             std::move(windows_buildPresets),
             std::move(linux_buildPresets),
             std::move(dlinux_buildPresets),
         });
-        auto cmakeMinimumRequired = json_type::object({{"major", 3}, {"minor", 23}, {"patch", 0}});
-        auto value = json_type::object({{"version", 10},
-                                        {"cmakeMinimumRequired", std::move(cmakeMinimumRequired)},
-                                        {"configurePresets", std::move(configurePresets)},
-                                        {"buildPresets", std::move(buildPresets)}});
         std::cout << "json text: " << value << std::endl;
         std::cout << "equal: " << (value == text) << std::endl;
     } while (false);

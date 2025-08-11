@@ -2,6 +2,8 @@
 
 #define JSON_IMPLEMENTATION
 
+#include <array>
+#include <atomic>
 #include <vector>
 
 #include "qlib/string.h"
@@ -169,7 +171,7 @@ struct converter<Char,
     }
     static T decode(string_view_t s) {
         try {
-            return s.to<T>();
+            return s.template to<T>();
         } catch (string::bad_to const& _) {
             throw bad_convert();
         }
@@ -210,6 +212,44 @@ protected:
     impl_type _impl;
 
     friend class parser<Char, Policy>;
+
+    struct FixedOutStream final : public object {
+    protected:
+        template <class T>
+        using uptr = std::unique_ptr<T>;
+
+        uptr<Char> _impl{nullptr};
+        size_type _size{0u};
+        size_type _capacity{0u};
+
+    public:
+        class not_enough_space final : public std::exception {
+        public:
+            [[nodiscard]] const char* what() const noexcept override { return "not enough space"; }
+        };
+
+        explicit FixedOutStream(size_type capacity)
+                : _impl(new Char[capacity + 1u]), _size(0u), _capacity(capacity) {}
+
+        FixedOutStream(FixedOutStream const&) = delete;
+        FixedOutStream& operator=(FixedOutStream const&) = delete;
+        FixedOutStream(FixedOutStream&&) = default;
+        FixedOutStream& operator=(FixedOutStream&&) = default;
+
+        FixedOutStream& operator<<(string_view_t s) {
+            size_type new_size = _size + s.size();
+            if (unlikely(new_size > _capacity)) {
+                throw not_enough_space();
+            }
+            std::copy(s.begin(), s.end(), _impl.get() + _size);
+            _size = new_size;
+            return *this;
+        }
+
+        [[nodiscard]] bool_t operator==(string_view_t s) const {
+            return _size == s.size() && std::equal(s.begin(), s.end(), _impl.get());
+        }
+    };
 
 public:
     class key_value_ref final : public object {
@@ -352,10 +392,26 @@ public:
         }
     }
 
+    template <class T>
+    self& operator=(T&& o) {
+        this->~value();
+        new (this) value(std::forward<T>(o));
+        return *this;
+    }
+
+    self& operator=(self const& o) {
+        if (unlikely(this != &o)) {
+            this->~value();
+            new (this) self(o);
+        }
+        return *this;
+    }
+
     self& operator=(self&& o) {
-        _type = o._type;
-        _impl = std::move(o._impl);
-        o._type = value_enum::null;
+        if (unlikely(this != &o)) {
+            this->~value();
+            new (this) self(std::move(o));
+        }
         return *this;
     }
 
@@ -403,6 +459,17 @@ public:
         }
         // throw no_key();
         return default_value;
+    }
+
+    [[nodiscard]] constexpr self& operator[](string_view_t key) {
+        auto& object = this->object();
+        for (auto& pair : object) {
+            if (pair.first == key) {
+                return pair.second;
+            }
+        }
+        object.emplace_back(key, self());
+        return object.back().second;
     }
 
     [[nodiscard]] object_type& object() {
@@ -503,7 +570,23 @@ public:
         return to(out);
     }
 
-    // [[nodiscard]] operator bool_t() const noexcept { return !empty(); }
+    [[nodiscard]] explicit operator bool_t() const noexcept { return !empty(); }
+
+    [[nodiscard]] bool_t operator==(string_view_t text) const {
+        FixedOutStream out(text.size());
+        bool_t ok{False};
+        try {
+            ok = (to(out) == text);
+        } catch (typename FixedOutStream::not_enough_space const& _) {
+            ok = False;
+        }
+        return ok;
+    }
+
+    template <class T>
+    [[nodiscard]] bool_t operator!=(T const& o) const {
+        return !(*this == o);
+    }
 };
 
 template <class Char, memory_policy_t Policy>
@@ -526,6 +609,22 @@ protected:
         key_type key;
     };
     using impl_type = storage<impl>;
+
+    struct pool_entry {
+        std::atomic<bool_t> is_used{False};
+        std::vector<impl_type> layers{};
+    };
+
+    static inline thread_local std::array<pool_entry, 4u> thread_pool{};
+    static inline std::array<pool_entry, 16u> pool{};
+
+    static inline bool_t _init_pool = []() {
+        for (auto& it : pool) {
+            it.is_used = False;
+            it.layers.reserve(32u);
+        }
+        return True;
+    }();
 
     static auto& _is_object_from_type(impl_type& value) {
         return *(bool_t*)((uint8_t*)&value + offsetof(impl, is_object));
@@ -573,7 +672,7 @@ protected:
     }
 
     constexpr static inline bool_t is_space(char ch) noexcept {
-        return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
+        return (ch == 32) | (ch == 9) | (ch == 10) | (ch == 13);
     }
 
     template <class Iter1, class Iter2>
@@ -582,32 +681,63 @@ protected:
             *begin++ == 'l' && *begin++ == 'l';
     }
 
-public:
-    constexpr parser() noexcept = default;
-
-    constexpr parser(size_type capacity) noexcept : _capacity(capacity) {}
+    static inline constexpr bool_t whitespace_table[256] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,  // \t, \n, \r
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // ' '
+        // ... 其余为0
+    };
 
     template <class Iter1, class Iter2>
-    constexpr int32_t operator()(json_type* json, Iter1 begin, Iter2 end) {
+    constexpr static inline Iter1 _skip_space(Iter1 begin, Iter2 end) noexcept {
+        // while (begin + 3 < end) {
+        //     auto b1 = whitespace_table[*begin];
+        //     auto b2 = whitespace_table[*(begin + 1)];
+        //     auto b3 = whitespace_table[*(begin + 2)];
+        //     auto b4 = whitespace_table[*(begin + 3)];
+        //     if (!b1) {
+        //         break;
+        //     }
+        //     if (!b2) {
+        //         begin += 1;
+        //         break;
+        //     }
+        //     if (!b3) {
+        //         begin += 2;
+        //         break;
+        //     }
+        //     if (!b4) {
+        //         begin += 3;
+        //         break;
+        //     }
+        //     begin += 4;
+        // }
+        while (begin != end && whitespace_table[*begin]) {
+            ++begin;
+        }
+        // while (begin != end && is_space(*begin)) {
+        //     ++begin;
+        // }
+        return begin;
+    }
+
+    template <class Iter1, class Iter2>
+    constexpr int32_t _call(json_type* json,
+                            Iter1 begin,
+                            Iter2 end,
+                            std::vector<impl_type>& layers) {
         int32_t result{0};
 
         do {
-            while ((begin != end) && is_space(*begin)) {
-                ++begin;
-            }
-
-            if (unlikely(*begin != '{')) {
+            begin = _skip_space(begin, end);
+            if (unlikely(begin == end || *begin != '{')) {
                 result = static_cast<int32_t>(error::missing_left_brace);
                 break;
             }
-
-            std::vector<impl_type> layers;
-            layers.reserve(_capacity);
-            {
-                layers.emplace_back(impl_type{});
-                _impl_init(layers.front(), True);
-            }
             ++begin;
+
+            layers.emplace_back(impl_type{});
+            _impl_init(layers.front(), True);
 
             Iter1 key_start{};
             Iter1 key_stop{};
@@ -615,10 +745,8 @@ public:
             while (begin != end && result == 0) {
                 bool is_object{_is_object_from_type(layers.back())};
                 if (is_object) {
-                    while ((begin != end) && is_space(*begin)) {
-                        ++begin;
-                    }
-                    if (unlikely(*begin != '"')) {
+                    begin = _skip_space(begin, end);
+                    if (unlikely(begin == end || *begin != '"')) {
                         result = static_cast<int32_t>(error::missing_left_quote);
                         break;
                     }
@@ -627,20 +755,24 @@ public:
                     while (begin != end && *begin != '"') {
                         ++begin;
                     }
+                    if (unlikely(begin == end)) {
+                        result = (int32_t)error::missing_right_brace;
+                        break;
+                    }
                     key_stop = begin;
                     ++begin;
-                    while ((begin != end) && is_space(*begin)) {
-                        ++begin;
-                    }
-                    if (unlikely(*begin != ':')) {
+                    begin = _skip_space(begin, end);
+                    if (unlikely(begin == end || *begin != ':')) {
                         result = static_cast<int32_t>(error::missing_colon);
                         break;
                     }
                     ++begin;
                 }
 
-                while ((begin != end) && is_space(*begin)) {
-                    ++begin;
+                begin = _skip_space(begin, end);
+                if (unlikely(begin == end)) {
+                    result = (int32_t)error::missing_right_brace;
+                    break;
                 }
 
                 switch (*begin) {
@@ -649,6 +781,10 @@ public:
                         auto value_start = begin;
                         while ((begin != end) && *begin != '"') {
                             ++begin;
+                        }
+                        if (unlikely(begin == end)) {
+                            result = (int32_t)error::missing_right_brace;
+                            break;
                         }
                         auto value_stop = begin;
                         ++begin;
@@ -687,6 +823,10 @@ public:
                         while (begin != end && *begin != ',' && *begin != '}' && *begin != ']' &&
                                (!is_space(*begin))) {
                             ++begin;
+                        }
+                        if (unlikely(begin == end)) {
+                            result = (int32_t)error::missing_right_brace;
+                            break;
                         }
                         auto value_stop = begin;
                         auto& last_layer = layers.back();
@@ -755,7 +895,10 @@ public:
                     }
                     ++begin;
                 }
-
+                if (unlikely(begin == end)) {
+                    result = (int32_t)error::missing_right_brace;
+                    break;
+                }
                 if (unlikely(result != 0 || exit)) {
                     break;
                 }
@@ -769,6 +912,61 @@ public:
             *json = json_type(std::move(object));
         } while (false);
 
+        return result;
+    }
+
+public:
+    constexpr parser() noexcept = default;
+
+    constexpr parser(size_type capacity) noexcept : _capacity(capacity) {}
+
+    template <class Iter1, class Iter2>
+    int32_t operator()(json_type* json, Iter1 begin, Iter2 end) {
+        int32_t result{0u};
+
+        // 首先尝试使用线程局部池
+        bool_t find{False};
+        for (auto& it : thread_pool) {
+            if (it.is_used.compare_exchange_strong(find, True)) {
+                find = True;
+                it.layers.clear();
+                it.layers.reserve(_capacity);
+                try {
+                    result = _call(json, begin, end, it.layers);
+                } catch (...) {
+                    it.is_used = False;
+                    throw;
+                }
+                it.is_used = False;
+                break;
+            }
+        }
+
+        // 如果线程局部池满，则使用全局池
+        if (!find) {
+            for (auto& it : pool) {
+                if (it.is_used.compare_exchange_strong(find, True)) {
+                    find = True;
+                    it.layers.clear();
+                    it.layers.reserve(_capacity);
+                    try {
+                        result = _call(json, begin, end, it.layers);
+                    } catch (...) {
+                        it.is_used = False;
+                        throw;
+                    }
+                    it.is_used = False;
+                    break;
+                }
+            }
+        }
+
+        // 最后回退到栈分配
+        if (!find) {
+            std::vector<impl_type> layers;
+            layers.reserve(_capacity);
+            result = _call(json, begin, end, layers);
+        }
         return result;
     }
 };
@@ -804,14 +1002,11 @@ int32_t parse(value* ptr, string_view_t file) noexcept {
 }
 #endif
 
-#ifdef _GLIBCXX_OSTREAM
-template <class Char, memory_policy_t Policy>
-std::basic_ostream<Char>& operator<<(std::basic_ostream<Char>& out,
-                                     value<Char, Policy> const& value) {
+template <class OutStream, class Char, memory_policy_t Policy>
+OutStream& operator<<(OutStream& out, value<Char, Policy> const& value) {
     value.to(out);
     return out;
 }
-#endif
 
 };  // namespace json
 

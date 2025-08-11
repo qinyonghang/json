@@ -56,8 +56,8 @@ int32_t main(int32_t argc, char* argv[]) {
             break;
         }
 
-        std::cout << "json text: " << json.to() << std::endl;
-        std::cout << "equal: " << (json.to() == text) << std::endl;
+        std::cout << "json text: " << json << std::endl;
+        std::cout << "equal: " << (json == text) << std::endl;
 
         auto version = json["version"].get<int32_t>();
         std::cout << "version: " << version << std::endl;
@@ -87,7 +87,7 @@ int32_t main(int32_t argc, char* argv[]) {
             std::cout << "    configurePreset: " << configurePreset << std::endl;
             std::cout << "    configuration: " << configuration << std::endl;
             auto& targets = buildPreset["targets"];
-            if (!targets.empty()) {
+            if (targets) {
                 std::cout << "    targets: " << std::endl;
                 for (auto& target : targets.array()) {
                     auto name = target.get<string_t>();

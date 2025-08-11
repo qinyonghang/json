@@ -1,9 +1,8 @@
 
-set(TARGET_NAME benchmark)
+set(TARGET_NAME benchmark1)
 
 message(STATUS "Build ${TARGET_NAME}:")
 add_executable(${TARGET_NAME} main.cpp)
-# add_test(NAME benchmark COMMAND ${TARGET_NAME})
 
 set_target_properties(${TARGET_NAME} PROPERTIES
     C_STANDARD 17
