@@ -25,10 +25,34 @@ A fast, efficient JSON parsing and serialization library designed for modern C++
 
 Performance comparison with popular JSON libraries on the same hardware:
 
-| Operation | qjson(copy) | qjson(view) | nlohmann::json |
-| --------- | ----------- | ----------- | -------------- |
-| Parsing   | 4326 ns     | 2017 ns     | 26241 ns       |
-| Serializing | 6855 ns     | 4245 ns     | 20174 ns        |
+### JSON File Structure Statistics
+
+| Filename | Size(bytes) | elementCount | objectCount | arrayCount | numberCount | stringCount | trueCount | falseCount | nullCount |
+| -------- | ----------- | ------------ | ----------- | ---------- | ----------  | ----------  | --------- | ---------- | --------- |
+| canana.json | 2251051 | 167170 | 4 | 56045 | 111126 | 12 | 0 | 0 | 0 |
+| citm_catalog.json | 1727204 | 11908 | 10937 | 10451 | 14392 | 26604 | 0 | 0 | 1263 |
+| twitter.json | 631514 | 568 | 1264 | 1050 | 2109 | 18099 | 345 | 2446 | 1946 |
+
+### Parsing Performance (MB/s)
+| Library | canana.json | citm_catalog.json | twitter.json |
+| - | - | - | - |
+| qjson | 296.474 | 745.672 | 615.806 |
+| Nlohmann Json | 115.010 | 363.779 | 175.228 |
+| Rapid Json | 625.880 | 1591.488 | 579.652 |
+
+### Serialization Performance (MB/s)
+| Library | canana.json | citm_catalog.json | twitter.json |
+| - | - | - | - |
+| qjson | 1873.272 | 3894.066 | 3740.737 |
+| Nlohmann Json | 51.979 | 523.084 | 309.168 |
+| Rapid Json | 307.825 | 2491.967 | 1221.620 |
+
+### Statistics Performance (MB/s)
+| Library | canana.json | citm_catalog.json | twitter.json |
+| - | - | - | - |
+| qjson | 5963.249 | 5968.080 | 3273.145 |
+| Nlohmann Json | 4557.897 | 4601.090 | 1930.316 |
+| Rapid Json | 6545.029 | 14707.054 | 13383.526 |
 
 + Test environment: Intel i7-12700H @ 2.68GHz, 100,000次迭代
 

@@ -24,10 +24,34 @@
 
 在相同硬件环境下与流行JSON库的性能对比
 
-| 操作 | 本库(copy) | 本库(view) | nlohmann::json |
-| --- | --- | --- | --- |
-| 解析 | 4326 ns | 2017 ns | 26241 ns |
-| 序列化 | 6855 ns | 4245 ns | 20174 ns |
+### JSON文件结构统计
+
+| 文件名 | Size(bytes) | elementCount | objectCount | arrayCount | numberCount | stringCount | trueCount | falseCount | nullCount |
+| -------- | ----------- | ------------ | ----------- | ---------- | ----------  | ----------  | --------- | ---------- | --------- |
+| canana.json | 2251051 | 167170 | 4 | 56045 | 111126 | 12 | 0 | 0 | 0 |
+| citm_catalog.json | 1727204 | 11908 | 10937 | 10451 | 14392 | 26604 | 0 | 0 | 1263 |
+| twitter.json | 631514 | 568 | 1264 | 1050 | 2109 | 18099 | 345 | 2446 | 1946 |
+
+### 解析速度对比表 (MB/s)
+| Library | canana.json | citm_catalog.json | twitter.json |
+| - | - | - | - |
+| qjson | 296.474 | 745.672 | 615.806 |
+| Nlohmann Json | 115.010 | 363.779 | 175.228 |
+| Rapid Json | 625.880 | 1591.488 | 579.652 |
+
+### 序列化速度对比表 (MB/s)
+| Library | canana.json | citm_catalog.json | twitter.json |
+| - | - | - | - |
+| qjson | 1873.272 | 3894.066 | 3740.737 |
+| Nlohmann Json | 51.979 | 523.084 | 309.168 |
+| Rapid Json | 307.825 | 2491.967 | 1221.620 |
+
+### 统计速度对比表 (MB/s)
+| Library | canana.json | citm_catalog.json | twitter.json |
+| - | - | - | - |
+| qjson | 5963.249 | 5968.080 | 3273.145 |
+| Nlohmann Json | 4557.897 | 4601.090 | 1930.316 |
+| Rapid Json | 6545.029 | 14707.054 | 13383.526 |
 
 + 测试环境：Intel i7-12700H @ 2.68GHz, 100,000次迭代
 
