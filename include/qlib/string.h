@@ -3,7 +3,6 @@
 #define STRING_IMPLEMENTATION
 
 #include <charconv>
-#include <memory>
 
 #include "qlib/object.h"
 
@@ -12,8 +11,8 @@ namespace qlib {
 namespace string {
 
 template <class Char>
-[[nodiscard]] constexpr size_t strlen(Char const* str) noexcept {
-    size_t size{0u};
+[[nodiscard]] constexpr uint64_t strlen(Char const* str) noexcept {
+    uint64_t size{0u};
     while (str[size] != '\0') {
         ++size;
     }
@@ -33,8 +32,15 @@ template <class Char>
     return ok;
 }
 
-template <class Char, memory_policy_t Policy = memory_policy_t::copy>
-class value;
+class bad_to final : public exception {
+public:
+    char const* what() const noexcept override { return "bad to"; }
+};
+
+class bad_from final : public exception {
+public:
+    char const* what() const noexcept override { return "bad from"; }
+};
 
 template <class Char>
 struct char_traits final : public object {
@@ -45,19 +51,12 @@ struct char_traits final : public object {
     using const_reference = value_type const&;
     using iterator = pointer;
     using const_iterator = const_pointer;
-    using size_type = size_t;
+    using size_type = uint64_t;
     static constexpr size_type npos = size_type(-1);
 };
 
-class bad_to final : public std::exception {
-public:
-    char const* what() const noexcept override { return "bad to"; }
-};
-
-class bad_from final : public std::exception {
-public:
-    char const* what() const noexcept override { return "bad from"; }
-};
+template <class Char, memory_policy_t Policy = memory_policy_t::copy>
+class value;
 
 template <class Char>
 class value<Char, memory_policy_t::view> final : public object {
@@ -163,36 +162,14 @@ public:
 
     [[nodiscard]] explicit operator bool_t() const noexcept { return !empty(); }
 
-    template <class T,
-              class Enable = std::enable_if_t<is_one_of_v<T,
-                                                          bool_t,
-                                                          int8_t,
-                                                          int16_t,
-                                                          int32_t,
-                                                          int64_t,
-                                                          uint8_t,
-                                                          uint16_t,
-                                                          uint32_t,
-                                                          uint64_t,
-                                                          float32_t,
-                                                          float64_t>>>
+    template <class T, class Enable = enable_if_t<is_integral_v<T> || is_floating_point_v<T>>>
     [[nodiscard]] constexpr T to() const {
-        if constexpr (std::is_same_v<T, bool_t>) {
-            if (*this == "true" || *this == "True") {
-                return True;
-            } else if (*this == "false" || *this == "False") {
-                return False;
-            } else {
-                throw bad_to();
-            }
-        } else {
-            T result;
-            auto [ptr, ec] = std::from_chars(begin(), end(), result);
-            if (unlikely(ec != std::errc{})) {
-                throw bad_to();
-            }
-            return result;
+        T result;
+        auto [ptr, ec] = std::from_chars(begin(), end(), result);
+        if (unlikely(ec != std::errc{})) {
+            throw bad_to();
         }
+        return result;
     }
 };
 
@@ -213,14 +190,11 @@ public:
     static constexpr size_type npos = traits_type::npos;
 
 protected:
-    template <class T>
-    using uptr = std::unique_ptr<T>;
-
-    uptr<Char[]> _impl{nullptr};
+    Char* _impl{nullptr};
     size_type _size{0u};
     size_type _capacity{0u};
 
-    template <class T>
+    template <class T, class Enable = enable_if_t<is_integral_v<T> || is_floating_point_v<T>>>
     [[nodiscard]] static inline self _from(T value, size_type capacity) {
         self result{capacity};
         auto [ptr, ec] = std::to_chars(result.data(), result.data() + capacity, value);
@@ -236,10 +210,13 @@ protected:
         const size_type size = std::distance(begin, end);
         if (likely(size > 0)) {
             if (likely(size > capacity())) {
-                _impl = uptr<Char[]>(new Char[size + 1u]);
+                if (_impl != nullptr) {
+                    delete[] _impl;
+                }
+                _impl = new Char[size + 1u];
                 _capacity = size;
             }
-            std::copy(begin, end, _impl.get());
+            std::copy(begin, end, _impl);
             _impl[size] = '\0';
             _size = size;
         }
@@ -250,7 +227,7 @@ public:
 
     explicit value(size_type capacity) : _capacity(capacity) {
         if (likely(capacity > 0)) {
-            _impl = uptr<Char[]>(new Char[capacity + 1u]);
+            _impl = new Char[capacity + 1u];
         }
     }
 
@@ -265,7 +242,8 @@ public:
 
     value(self const& o) : value(o.begin(), o.end()) {}
 
-    value(self&& o) noexcept : _impl(std::move(o._impl)), _size(o._size), _capacity(o._capacity) {
+    value(self&& o) noexcept : _impl(o._impl), _size(o._size), _capacity(o._capacity) {
+        o._impl = nullptr;
         o._size = 0u;
         o._capacity = 0u;
     }
@@ -273,6 +251,15 @@ public:
 #ifdef _BASIC_STRING_H
     explicit value(std::basic_string_view<Char> str) : value(str.data(), str.data() + str.size()) {}
 #endif
+
+    ~value() noexcept {
+        if (_impl != nullptr) {
+            delete[] _impl;
+            _impl = nullptr;
+            _size = 0u;
+            _capacity = 0u;
+        }
+    }
 
     self& operator=(const_pointer o) { return *this = string_view_type(o); }
 
@@ -290,7 +277,10 @@ public:
 
     self& operator=(self&& o) noexcept {
         if (unlikely(this != &o)) {
-            _impl = std::move(o._impl);
+            if (_impl != nullptr) {
+                delete[] _impl;
+            }
+            _impl = o._impl;
             _size = o._size;
             _capacity = o._capacity;
             o._impl = nullptr;
@@ -302,17 +292,20 @@ public:
 
     void reserve(size_type capacity) {
         if (likely(capacity > this->capacity())) {
-            auto impl = uptr<Char[]>(new Char[capacity + 1u]);
-            std::copy(begin(), end(), impl.get());
-            _impl = std::move(impl);
+            auto impl = new Char[capacity + 1u];
+            std::copy(begin(), end(), impl);
+            if (_impl != nullptr) {
+                delete[] _impl;
+            }
+            _impl = impl;
             _impl[_size] = '\0';
             _capacity = capacity;
         }
     }
 
-    [[nodiscard]] constexpr pointer data() noexcept { return _impl.get(); }
+    [[nodiscard]] constexpr pointer data() noexcept { return _impl; }
 
-    [[nodiscard]] constexpr const_pointer data() const noexcept { return _impl.get(); }
+    [[nodiscard]] constexpr const_pointer data() const noexcept { return _impl; }
 
     [[nodiscard]] constexpr size_type size() const noexcept { return _size; }
 
@@ -368,9 +361,12 @@ public:
             const size_type __new_size = size() + __size;
             if (unlikely(__new_size > capacity())) {
                 size_type const __new_capacity = __new_size * 2;
-                auto __impl = uptr<Char[]>(new Char[__new_capacity + 1u]);
-                std::copy(begin(), end(), __impl.get());
-                _impl = std::move(__impl);
+                auto __impl = new Char[__new_capacity + 1u];
+                std::copy(begin(), end(), __impl);
+                if (_impl != nullptr) {
+                    delete[] _impl;
+                }
+                _impl = __impl;
                 _capacity = __new_capacity;
             }
             std::copy(__begin, __end, end());
@@ -404,7 +400,6 @@ public:
     }
 #endif
 
-    [[nodiscard]] static self from(bool_t value) { return value ? "True" : "False"; }
     [[nodiscard]] static self from(int8_t value) { return _from(value, 3u); }
     [[nodiscard]] static self from(int16_t value) { return _from(value, 5u); }
     [[nodiscard]] static self from(int32_t value) { return _from(value, 10u); }
@@ -419,6 +414,14 @@ public:
     template <class T>
     [[nodiscard]] T to() const {
         return static_cast<string_view_type>(*this).template to<T>();
+    }
+
+    [[nodiscard]] static self move(Char* value, size_type size) {
+        self result;
+        result._impl = value;
+        result._size = size;
+        result._capacity = size;
+        return result;
     }
 };
 

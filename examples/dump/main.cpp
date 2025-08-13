@@ -50,17 +50,16 @@ int32_t main(int32_t argc, char* argv[]) {
         constexpr auto end = begin + text_len;
 
         using json_type = json_view_t;
-        auto build_type = json_type::object({{"type", "STRING"}, {"value", "Release"}});
-        auto install_prefix =
-            json_type::object({{"type", "STRING"}, {"value", "${sourceDir}/install"}});
-        auto cmake_msvc_runtime_library =
-            json_type::object({{"type", "STRING"}, {"value", "MultiThreaded"}});
-        auto windows_condition = json_type::object(
-            {{"type", "equals"}, {"lhs", "${hostSystemName}"}, {"rhs", "Windows"}});
+        auto build_type = json_type{{"type", "STRING"}, {"value", "Release"}};
+        auto install_prefix = json_type{{"type", "STRING"}, {"value", "${sourceDir}/install"}};
+        // auto cmake_msvc_runtime_library = json_type{{"type", "STRING"}, {"value", "MultiThreaded"}};
+        auto windows_condition =
+            json_type{{"type", "equals"}, {"lhs", "${hostSystemName}"}, {"rhs", "Windows"}};
         auto windows_cacheVariables =
-            json_type::object({{"CMAKE_BUILD_TYPE", build_type},
-                               {"CMAKE_INSTALL_PREFIX", install_prefix},
-                               {"CMAKE_MSVC_RUNTIME_LIBRARY", cmake_msvc_runtime_library}});
+            json_type{{"CMAKE_BUILD_TYPE", build_type},
+                      {"CMAKE_INSTALL_PREFIX", install_prefix},
+                      {"CMAKE_MSVC_RUNTIME_LIBRARY",
+                       json_type{{"type", "STRING"}, {"value", "MultiThreaded"}}}};
         auto windows_configurePresets =
             json_type::object({{"name", "windows"},
                                {"condition", std::move(windows_condition)},

@@ -1,7 +1,8 @@
 // #include <chrono>
 #include <benchmark/benchmark.h>
 #include <array>
-#include <iostream>
+#include <fstream>
+// #include <iostream>
 #include <string>
 
 #ifdef HAS_NLOHMANN_JSON
@@ -10,117 +11,85 @@
 #include "qlib/json.h"
 #include "qlib/string.h"
 
+constexpr static inline auto resources_path = RESOUCES_PATH;
+const static inline auto canada_json = std::string(resources_path) + "/canada.json";
+const static inline auto citm_catalog_json = std::string(resources_path) + "/citm_catalog.json";
+const static inline auto twitter_json = std::string(resources_path) + "/twitter.json";
+
 using namespace qlib;
 
-constexpr static inline auto text =
-    "{\"version\":10,\"cmakeMinimumRequired\":{\"major\":3,\"minor\":23,\"patch\":0},"
-    "\"configurePresets\":[{\"name\":\"windows\",\"condition\":{\"type\":\"equals\",\"lhs\":\"$"
-    "{"
-    "hostSystemName}\",\"rhs\":\"Windows\"},\"displayName\":\"Windows64 "
-    "Configuration\",\"description\":\"Windows64 configuration for building the "
-    "project.\",\"binaryDir\":\"${sourceDir}/build/windows\",\"generator\":\"Visual Studio 17 "
-    "2022\",\"architecture\":\"x64\",\"cacheVariables\":{\"CMAKE_BUILD_TYPE\":{\"type\":"
-    "\"STRING\","
-    "\"value\":\"Release\"},\"CMAKE_INSTALL_PREFIX\":{\"type\":\"STRING\",\"value\":\"${"
-    "sourceDir}/"
-    "install\"},\"CMAKE_MSVC_RUNTIME_LIBRARY\":{\"type\":\"STRING\",\"value\":"
-    "\"MultiThreaded\"}}},"
-    "{\"name\":\"linux\",\"condition\":{\"type\":\"equals\",\"lhs\":\"${hostSystemName}\","
-    "\"rhs\":"
-    "\"Linux\"},\"displayName\":\"Linux Configuration\",\"description\":\"Linux configuration "
-    "for "
-    "building the "
-    "project.\",\"binaryDir\":\"${sourceDir}/build/"
-    "linux\",\"generator\":\"Ninja\",\"cacheVariables\":{\"CMAKE_BUILD_TYPE\":{\"type\":"
-    "\"STRING\","
-    "\"value\":\"Release\"},\"CMAKE_INSTALL_PREFIX\":{\"type\":\"STRING\",\"value\":\"${"
-    "sourceDir}/"
-    "install\"}}},{\"name\":\"dlinux\",\"condition\":{\"type\":\"equals\",\"lhs\":\"${"
-    "hostSystemName}\",\"rhs\":\"Linux\"},\"displayName\":\"Linux Debug "
-    "Configuration\",\"description\":\"Linux Debug configuration for building the "
-    "project.\",\"binaryDir\":\"${sourceDir}/build/"
-    "dlinux\",\"generator\":\"Ninja\",\"cacheVariables\":{\"CMAKE_BUILD_TYPE\":{\"type\":"
-    "\"STRING\",\"value\":\"Debug\"},\"CMAKE_INSTALL_PREFIX\":{\"type\":\"STRING\",\"value\":"
-    "\"${"
-    "sourceDir}/"
-    "install\"}}}],\"buildPresets\":[{\"name\":\"windows\",\"configurePreset\":\"windows\","
-    "\"configuration\":\"Release\",\"targets\":[\"ALL_BUILD\"]},{\"name\":\"linux\","
-    "\"configurePreset\":\"linux\",\"configuration\":\"Release\"},{\"name\":\"dlinux\","
-    "\"configurePreset\":\"dlinux\",\"configuration\":\"Debug\"}]}";
-
-constexpr static inline auto text_len = string::strlen(text);
-
-constexpr static inline auto begin = text;
-constexpr static inline auto end = begin + text_len;
-
-#define PARSE_WITH_JSON(json_t)                                                                    \
-    do {                                                                                           \
-        using json_type = json_t;                                                                  \
-        using string_t = typename json_type::string_type;                                          \
-                                                                                                   \
-        json_type json;                                                                            \
-        auto result = json::parse(&json, begin, end);                                              \
-        if (0 != result) {                                                                         \
-            std::cout << "json::parse return " << result << std::endl;                             \
-            std::exit(0);                                                                          \
-        }                                                                                          \
-                                                                                                   \
-        auto version = json["version"].get<int32_t>();                                             \
-        assert(version == 10);                                                                     \
-                                                                                                   \
-        auto& cmakeRequired = json["cmakeMinimumRequired"];                                        \
-        auto major = cmakeRequired["major"].get<int32_t>();                                        \
-        auto minor = cmakeRequired["minor"].get<int32_t>();                                        \
-        auto patch = cmakeRequired["patch"].get<int32_t>();                                        \
-        assert(major == 3 && minor == 23 && patch == 0);                                           \
-                                                                                                   \
-        auto& configurePresets = json["configurePresets"].array();                                 \
-        std::array<string_t, 3u> presetNames{"windows", "linux", "dlinux"};                        \
-        for (size_t i = 0u; i < presetNames.size(); ++i) {                                         \
-            auto& configurePreset = configurePresets[i];                                           \
-            auto name = configurePreset["name"].get<string_t>();                                   \
-            assert(name == presetNames[i]);                                                        \
-        }                                                                                          \
-                                                                                                   \
-        auto& buildPresets = json["buildPresets"].array();                                         \
-        for (size_t i = 0u; i < presetNames.size(); ++i) {                                         \
-            auto& buildPreset = buildPresets[i];                                                   \
-            auto name = buildPreset["name"].get<string_t>();                                       \
-            assert(name == presetNames[i]);                                                        \
-        }                                                                                          \
-                                                                                                   \
-        auto fakeValue = json["fakeValue"].get<int32_t>(0u);                                       \
-        assert(fakeValue == 0);                                                                    \
-                                                                                                   \
-        try {                                                                                      \
-            auto fakeValue = json["fakeValue"].get<int32_t>();                                     \
-            (void)fakeValue;                                                                       \
-        } catch (json::not_number const& _) {                                                      \
-        }                                                                                          \
-                                                                                                   \
-        benchmark::DoNotOptimize(json);                                                            \
-    } while (false)
-
-static auto benchmark_json_parse(benchmark::State& state) {
+template <class JsonType>
+static auto json_parse(std::string const& filepath, benchmark::State& state) {
+    std::ifstream file{filepath};
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + filepath);
+    }
+    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    auto begin = text.data();
+    auto end = begin + text.size();
     for (auto _ : state) {
-        json_t json;
+        JsonType json;
         auto result = json::parse(&json, begin, end);
         benchmark::DoNotOptimize(result);
         benchmark::DoNotOptimize(json);
     }
 }
 
-static auto benchmark_json_parse_view(benchmark::State& state) {
-    for (auto _ : state) {
-        json_view_t json;
-        auto result = json::parse(&json, begin, end);
-        benchmark::DoNotOptimize(result);
-        benchmark::DoNotOptimize(json);
-    }
+static auto benchmark_json_parse_canada(benchmark::State& state) {
+    json_parse<json_t>(canada_json, state);
+}
+
+static auto benchmark_json_parse_citm_catalog(benchmark::State& state) {
+    json_parse<json_t>(citm_catalog_json, state);
+}
+
+static auto benchmark_json_parse_twitter(benchmark::State& state) {
+    json_parse<json_t>(twitter_json, state);
+}
+
+static auto benchmark_json_parse_canada_view(benchmark::State& state) {
+    json_parse<json_view_t>(canada_json, state);
+}
+
+static auto benchmark_json_parse_citm_catalog_view(benchmark::State& state) {
+    json_parse<json_view_t>(citm_catalog_json, state);
+}
+
+static auto benchmark_json_parse_twitter_view(benchmark::State& state) {
+    json_parse<json_view_t>(twitter_json, state);
 }
 
 #ifdef HAS_NLOHMANN_JSON
-static auto benchmark_nlohmann_json(benchmark::State& state) {
+static auto benchmark_nlohmann_json_parse_canada(benchmark::State& state) {
+    std::ifstream file(canada_json);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + canada_json);
+    }
+    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    for (auto _ : state) {
+        auto json = nlohmann::json::parse(text);
+        benchmark::DoNotOptimize(json);
+    }
+}
+
+static auto benchmark_nlohmann_json_parse_citm_catalog(benchmark::State& state) {
+    std::ifstream file(citm_catalog_json);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + citm_catalog_json);
+    }
+    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    for (auto _ : state) {
+        auto json = nlohmann::json::parse(text);
+        benchmark::DoNotOptimize(json);
+    }
+}
+
+static auto benchmark_nlohmann_json_parse_twitter(benchmark::State& state) {
+    std::ifstream file(twitter_json);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + twitter_json);
+    }
+    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     for (auto _ : state) {
         auto json = nlohmann::json::parse(text);
         benchmark::DoNotOptimize(json);
@@ -239,33 +208,32 @@ int32_t main(int32_t argc, char* argv[]) {
     int32_t result{0};
 
     do {
+        auto _iterations = 1000u;
+
+        if (argc > 1) {
+            auto [ptr, ec] = std::from_chars(argv[1], argv[1] + string::strlen(argv[1]), _iterations);
+            if (ec != std::errc{}) {
+                result = -1;
+                break;
+            }
+        }
         benchmark::Initialize(&argc, argv);
         benchmark::ReportUnrecognizedArguments(argc, argv);
 
-        PARSE_WITH_JSON(json_t);
-        PARSE_WITH_JSON(json_view_t);
-
-        {
-            using json_type = json_t;
-            DECLARE_VALUE();
-            assert(value == text);
-            // std::cout << value.to() << std::endl;
-        }
-
-        {
-            using json_type = json_view_t;
-            DECLARE_VALUE();
-            assert(value == text);
-            // std::cout << value.to() << std::endl;
-        }
-
-        constexpr auto _iterations = 100000u;
-
-        // 注册测试用例
-        BENCHMARK(benchmark_json_parse)->Iterations(_iterations);
-        BENCHMARK(benchmark_json_parse_view)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_parse_canada)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_parse_canada_view)->Iterations(_iterations);
 #ifdef HAS_NLOHMANN_JSON
-        BENCHMARK(benchmark_nlohmann_json)->Iterations(_iterations);
+        BENCHMARK(benchmark_nlohmann_json_parse_canada)->Iterations(_iterations);
+#endif
+        BENCHMARK(benchmark_json_parse_citm_catalog)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_parse_citm_catalog_view)->Iterations(_iterations);
+#ifdef HAS_NLOHMANN_JSON
+        BENCHMARK(benchmark_nlohmann_json_parse_citm_catalog)->Iterations(_iterations);
+#endif
+        BENCHMARK(benchmark_json_parse_twitter)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_parse_twitter_view)->Iterations(_iterations);
+#ifdef HAS_NLOHMANN_JSON
+        BENCHMARK(benchmark_nlohmann_json_parse_twitter)->Iterations(_iterations);
 #endif
         BENCHMARK(benchmark_json_to)->Iterations(_iterations);
         BENCHMARK(benchmark_json_view_to)->Iterations(_iterations);

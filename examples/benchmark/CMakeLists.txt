@@ -18,6 +18,19 @@ target_link_libraries(${TARGET_NAME} PRIVATE
     -lbenchmark
 )
 
+target_compile_definitions(${TARGET_NAME} PRIVATE RESOUCES_PATH="${CMAKE_SOURCE_DIR}/resources")
+
+if (ENABLE_ASAN)
+# 启用AddressSanitizer
+target_compile_options(${TARGET_NAME} PRIVATE
+    -fsanitize=address -fno-omit-frame-pointer
+)
+
+target_link_options(${TARGET_NAME} PRIVATE
+    -fsanitize=address
+)
+endif()
+
 # target_compile_options(${TARGET_NAME} PRIVATE
 #     $<$<CONFIG:Release>:-O3 -march=native -DNDEBUG
 #         -funroll-loops

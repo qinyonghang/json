@@ -2,8 +2,10 @@
 
 #define JSON_IMPLEMENTATION
 
-#include <array>
-#include <atomic>
+// #include <iostream>
+// #include <array>
+// #include <atomic>
+// #include <immintrin.h>
 #include <vector>
 
 #include "qlib/string.h"
@@ -12,18 +14,22 @@ namespace qlib {
 namespace json {
 
 template <class T>
-constexpr static inline bool_t is_number_v = is_one_of_v<T,
-                                                         int8_t,
-                                                         int16_t,
-                                                         int32_t,
-                                                         int64_t,
-                                                         uint8_t,
-                                                         uint16_t,
-                                                         uint32_t,
-                                                         uint64_t,
-                                                         float32_t,
-                                                         float64_t,
-                                                         bool_t>;
+constexpr static inline bool_t is_number_v = is_integral_v<T> || is_floating_point_v<T>;
+
+template <class Char>
+using string_view_t = string::value<Char, memory_policy_t::view>;
+
+template <class Char>
+using string_t = string::value<Char, memory_policy_t::copy>;
+
+template <class Char>
+constexpr static inline string_view_t<Char> null_str{"null"};
+
+template <class Char>
+constexpr static inline string_view_t<Char> true_str{"true"};
+
+template <class Char>
+constexpr static inline string_view_t<Char> false_str{"false"};
 
 enum class error : int32_t {
     unknown = -1,
@@ -38,6 +44,9 @@ enum class error : int32_t {
     missing_right_quote = -10,
     missing_colon = -11,
     missing_comma = -12,
+    invalid_unicode = -13,
+    invalid_null = -14,
+    invalid_boolean = -15,
 };
 
 enum class value_enum : uint8_t {
@@ -46,46 +55,40 @@ enum class value_enum : uint8_t {
     array = 1 << 1,
     string = 1 << 2,
     number = 1 << 3,
-    number_ref = 1 << 4,
+    boolean = 1 << 4,
+    // string_ref = 1 << 5,
+    number_ref = 1 << 6,
 };
 
-class not_object final : public std::exception {
+class not_object final : public exception {
 public:
     char const* what() const noexcept override { return "not object"; }
 };
 
-class not_array final : public std::exception {
+class not_array final : public exception {
 public:
     char const* what() const noexcept override { return "not array"; }
 };
 
-class not_string final : public std::exception {
+class not_string final : public exception {
 public:
     char const* what() const noexcept override { return "not string"; }
 };
 
-class not_number final : public std::exception {
+class not_number final : public exception {
 public:
     char const* what() const noexcept override { return "not number"; }
 };
 
-class no_key final : public std::exception {
+class not_boolean final : public exception {
 public:
-    char const* what() const noexcept override { return "no key"; }
+    char const* what() const noexcept override { return "not boolean"; }
 };
 
-class not_get final : public std::exception {
-public:
-    char const* what() const noexcept override { return "not get"; }
-};
-
-class bad_convert final : public std::exception {
+class bad_convert final : public exception {
 public:
     char const* what() const noexcept override { return "bad convert"; }
 };
-
-template <class Char, memory_policy_t Policy>
-class parser;
 
 template <class... Args>
 struct storage final {
@@ -125,18 +128,14 @@ struct converter;
 
 template <class Char>
 struct converter<Char, bool_t> final : public object {
-    using string_view_t = string::value<Char, memory_policy_t::view>;
-    using string_t = string::value<Char, memory_policy_t::copy>;
+    static string_view_t<Char> encode(bool_t value) {
+        return value ? true_str<Char> : false_str<Char>;
+    }
 
-    constexpr static inline string_view_t true_str{"true"};
-    constexpr static inline string_view_t false_str{"false"};
-
-    static string_view_t encode(bool_t value) { return value ? true_str : false_str; }
-
-    static bool_t decode(string_view_t s) {
-        if (s == true_str) {
+    static bool_t decode(string_view_t<Char> s) {
+        if (s == true_str<Char>) {
             return True;
-        } else if (s == false_str) {
+        } else if (s == false_str<Char>) {
             return False;
         } else {
             throw bad_convert();
@@ -145,20 +144,7 @@ struct converter<Char, bool_t> final : public object {
 };
 
 template <class Char, class T>
-struct converter<Char,
-                 T,
-                 std::enable_if_t<is_one_of_v<T,
-                                              int8_t,
-                                              int16_t,
-                                              int32_t,
-                                              int64_t,
-                                              uint8_t,
-                                              uint16_t,
-                                              uint32_t,
-                                              uint64_t,
-                                              float32_t,
-                                              float64_t>>>
-    final : public object {
+struct converter<Char, T, enable_if_t<is_number_v<T>>> final : public object {
     using string_view_t = string::value<Char, memory_policy_t::view>;
     using string_t = string::value<Char, memory_policy_t::copy>;
 
@@ -178,125 +164,123 @@ struct converter<Char,
     }
 };
 
-#ifdef _GLIBCXX_FS_PATH_H
-template <>
-struct converter<char, std::filesystem::path> final : public object {
-    static string_t encode(std::filesystem::path const& value) { return string_t{value.native()}; }
-
-    static std::filesystem::path decode(string_view_t s) {
-        return std::filesystem::path{s.begin(), s.end()};
-    }
-};
-#endif
+template <class Char, memory_policy_t Policy>
+class parser;
 
 template <class Char, memory_policy_t Policy>
 class value final : public object {
 public:
-    using char_type = Char;
     using base = object;
     using self = value<Char, Policy>;
-    using string_view_t = string::value<Char, memory_policy_t::view>;
-    using string_t = string::value<Char, memory_policy_t::copy>;
+    using char_type = Char;
+    using string_view_t = json::string_view_t<Char>;
+    using string_t = json::string_t<Char>;
     using key_type = string::value<Char, Policy>;
-    using object_type = std::vector<std::pair<key_type, self>>;
+    struct pair final {
+        key_type key;
+        self value;
+
+        template <class Key, class Value>
+        pair(Key&& _key, Value&& _value)
+                : key(std::forward<Key>(_key)), value(std::forward<Value>(_value)) {}
+
+        pair() = default;
+        pair(pair const&) = default;
+        pair(pair&&) = default;
+        pair& operator=(pair const&) = default;
+        pair& operator=(pair&&) = default;
+    };
+    using object_type = std::vector<pair>;
     using array_type = std::vector<self>;
     using string_type = string::value<Char, Policy>;
-    using number_type = string_t;
     using size_type = size_t;
     constexpr static inline memory_policy_t memory_policy = Policy;
     const static inline self default_value = self{};
 
 protected:
     value_enum _type{value_enum::null};
-    using impl_type = storage<object_type, array_type, string_type, number_type>;
+    using impl_type = storage<object_type, array_type, string_t, string_view_t>;
     impl_type _impl;
 
     friend class parser<Char, Policy>;
 
     struct FixedOutStream final : public object {
     protected:
-        template <class T>
-        using uptr = std::unique_ptr<T>;
-
-        uptr<Char> _impl{nullptr};
+        Char* _impl{nullptr};
         size_type _size{0u};
         size_type _capacity{0u};
 
     public:
-        class not_enough_space final : public std::exception {
-        public:
-            [[nodiscard]] const char* what() const noexcept override { return "not enough space"; }
-        };
-
         explicit FixedOutStream(size_type capacity)
                 : _impl(new Char[capacity + 1u]), _size(0u), _capacity(capacity) {}
 
         FixedOutStream(FixedOutStream const&) = delete;
         FixedOutStream& operator=(FixedOutStream const&) = delete;
-        FixedOutStream(FixedOutStream&&) = default;
-        FixedOutStream& operator=(FixedOutStream&&) = default;
+        FixedOutStream(FixedOutStream&& o)
+                : _impl(o._impl), _size(o._size), _capacity(o._capacity) {
+            o._impl = nullptr;
+            o._size = 0u;
+            o._capacity = 0u;
+        }
+
+        FixedOutStream& operator=(FixedOutStream&& o) noexcept {
+            if (this != &o) {
+                if (_impl != nullptr) {
+                    delete[] _impl;
+                }
+                _impl = o._impl;
+                _size = o._size;
+                _capacity = o._capacity;
+                o._impl = nullptr;
+                o._size = 0u;
+                o._capacity = 0u;
+            }
+            return *this;
+        }
+
+        ~FixedOutStream() {
+            if (_impl != nullptr) {
+                delete[] _impl;
+                _impl = nullptr;
+                _size = 0u;
+                _capacity = 0u;
+            }
+        }
 
         FixedOutStream& operator<<(string_view_t s) {
             size_type new_size = _size + s.size();
             if (unlikely(new_size > _capacity)) {
-                throw not_enough_space();
+                throw exception();
             }
-            std::copy(s.begin(), s.end(), _impl.get() + _size);
+            std::copy(s.begin(), s.end(), _impl + _size);
             _size = new_size;
             return *this;
         }
 
         [[nodiscard]] bool_t operator==(string_view_t s) const {
-            return _size == s.size() && std::equal(s.begin(), s.end(), _impl.get());
+            return _size == s.size() && std::equal(s.begin(), s.end(), _impl);
         }
     };
 
 public:
-    class key_value_ref final : public object {
-    public:
-        using self = key_value_ref;
-        using key_type = string_view_t;
-        using value_type = value<Char, Policy>;
-
-    protected:
-        mutable key_type _key;
-        mutable value_type _value;
-
-    public:
-        key_value_ref() = delete;
-        key_value_ref(self const&) = delete;
-        self& operator=(self const&) = delete;
-
-        constexpr key_value_ref(self&&) = default;
-        self& operator=(self&&) = default;
-
-        template <class Key, class... Args>
-        constexpr key_value_ref(Key&& key, Args&&... args)
-                : _key(std::forward<Key>(key)), _value(std::forward<Args>(args)...) {}
-
-        std::pair<key_type, value_type> operator*() const noexcept {
-            return {std::move(_key), std::move(_value)};
-        }
-    };
-
+    template <class T>
     class value_ref final : public object {
     public:
         using self = value_ref;
-        using value_type = value<Char, Policy>;
+        using value_type = T;
 
     protected:
-        mutable value_type _impl;
+        mutable T _impl;
 
     public:
         value_ref() = delete;
         value_ref(self const&) = delete;
+        value_ref(self&&) = default;
         self& operator=(self const&) = delete;
-
-        constexpr value_ref(self&&) = default;
         self& operator=(self&&) = default;
 
         template <class... Args>
-        constexpr value_ref(Args&&... args) : _impl(std::forward<Args>(args)...) {}
+        value_ref(Args&&... args) : _impl(std::forward<Args>(args)...) {}
 
         value_type operator*() const noexcept { return std::move(_impl); }
     };
@@ -331,9 +315,13 @@ public:
         new (&_impl) string_type(std::move(value));
     }
 
-    template <class T, class Enable = std::enable_if_t<is_number_v<T>>>
+    template <class T, class Enable = enable_if_t<is_number_v<T>>>
     constexpr value(T value) : _type(value_enum::number) {
-        new (&_impl) number_type(converter<Char, T>::encode(value));
+        new (&_impl) string_t(converter<Char, T>::encode(value));
+    }
+
+    constexpr value(bool_t value) : _type(value_enum::boolean) {
+        new (&_impl) string_view_t(converter<Char, bool_t>::encode(value));
     }
 
     constexpr value(self const& o) : _type(o._type) {
@@ -351,7 +339,11 @@ public:
                 break;
             }
             case value_enum::number: {
-                new (&_impl) number_type(*(number_type*)(&o._impl));
+                new (&_impl) string_t(*(string_t*)(&o._impl));
+                break;
+            }
+            case value_enum::boolean: {
+                new (&_impl) string_view_t(*(string_view_t*)(&o._impl));
                 break;
             }
             case value_enum::number_ref: {
@@ -364,6 +356,15 @@ public:
 
     constexpr value(self&& o) : _type(o._type), _impl(std::move(o._impl)) {
         o._type = value_enum::null;
+    }
+
+    constexpr value(std::initializer_list<value_ref<pair>> list) : _type(value_enum::object) {
+        new (&_impl) object_type();
+        auto object = (object_type*)(&_impl);
+        object->reserve(list.size());
+        for (auto const& item : list) {
+            object->emplace_back(std::move(*item));
+        }
     }
 
     ~value() noexcept {
@@ -381,7 +382,11 @@ public:
                 break;
             }
             case value_enum::number: {
-                ((number_type*)&_impl)->~number_type();
+                ((string_t*)&_impl)->~string_t();
+                break;
+            }
+            case value_enum::boolean: {
+                ((string_view_t*)&_impl)->~string_view_t();
                 break;
             }
             case value_enum::number_ref: {
@@ -395,7 +400,7 @@ public:
     template <class T>
     self& operator=(T&& o) {
         this->~value();
-        new (this) value(std::forward<T>(o));
+        new (this) self(std::forward<T>(o));
         return *this;
     }
 
@@ -421,23 +426,30 @@ public:
 
     template <class T>
     [[nodiscard]] constexpr T get() const {
-        if constexpr (is_one_of_v<T, string_t, string_view_t>) {
-            if (likely(_type == value_enum::string)) {
+        if constexpr (is_number_v<T>) {
+            if (likely(_type == value_enum::number_ref)) {
+                return converter<Char, T>::decode(*(string_type*)(&_impl));
+            } else if (likely(_type == value_enum::number)) {
+                return converter<Char, T>::decode(*(string_t*)(&_impl));
+            } else {
+                throw not_number();
+            }
+        } else if constexpr (is_same_v<T, bool_t>) {
+            if (likely(_type == value_enum::boolean)) {
+                return converter<Char, T>::decode(*(string_view_t*)(&_impl));
+            } else {
+                throw not_boolean();
+            }
+        } else if constexpr (is_same_v<T, string_t> || is_same_v<T, string_view_t>) {
+            if (_type == value_enum::string) {
                 return *(string_type*)(&_impl);
             } else {
                 throw not_string();
             }
-        } else if constexpr (is_number_v<T>) {
-            if (likely(_type == value_enum::number_ref)) {
-                return converter<Char, T>::decode(*(string_type*)(&_impl));
-            } else if (likely(_type == value_enum::number)) {
-                return converter<Char, T>::decode(*(number_type*)(&_impl));
-            } else {
-                throw not_number();
-            }
         } else {
-            static_assert(is_number_v<T> || is_one_of_v<T, string_t, string_view_t>,
-                          "Unsupported type for get()");
+            static_assert(is_number_v<T> || is_same_v<T, bool_t> || is_same_v<T, string_t> ||
+                              is_same_v<T, string_view_t>,
+                          "unsupported type");
             throw not_number();  // 这行不会执行，但为了通过编译检查
         }
     }
@@ -447,29 +459,27 @@ public:
         if (empty()) {
             return std::forward<T>(default_value);
         }
-        return get<std::decay_t<T>>();
+        return get<T>();
     }
 
     [[nodiscard]] constexpr self const& operator[](string_view_t key) const {
-        auto& object = this->object();
-        for (auto const& pair : object) {
-            if (pair.first == key) {
-                return pair.second;
+        for (auto const& pair : object()) {
+            if (pair.key == key) {
+                return pair.value;
             }
         }
-        // throw no_key();
         return default_value;
     }
 
     [[nodiscard]] constexpr self& operator[](string_view_t key) {
         auto& object = this->object();
         for (auto& pair : object) {
-            if (pair.first == key) {
-                return pair.second;
+            if (pair.key == key) {
+                return pair.value;
             }
         }
         object.emplace_back(key, self());
-        return object.back().second;
+        return object.back().value;
     }
 
     [[nodiscard]] object_type& object() {
@@ -490,7 +500,7 @@ public:
 
     [[nodiscard]] array_type const& array() const { return const_cast<self&>(*this).array(); }
 
-    [[nodiscard]] static self object(std::initializer_list<key_value_ref> list) {
+    [[nodiscard]] static self object(std::initializer_list<value_ref<pair>> list) {
         self value;
         value._type = value_enum::object;
         new (&value._impl) object_type();
@@ -502,7 +512,7 @@ public:
         return value;
     }
 
-    [[nodiscard]] static self array(std::initializer_list<value_ref> list) {
+    [[nodiscard]] static self array(std::initializer_list<value_ref<self>> list) {
         self value;
         value._type = value_enum::array;
         new (&value._impl) array_type();
@@ -518,7 +528,7 @@ public:
     constexpr OutStream& to(OutStream& out) const {
         switch (_type) {
             case value_enum::null: {
-                out << "null";
+                out << null_str<Char>;
                 break;
             }
             case value_enum::string: {
@@ -526,18 +536,22 @@ public:
                 break;
             }
             case value_enum::number: {
-                out << *((number_type*)(&_impl));
+                out << *((string_t*)(&_impl));
                 break;
             }
             case value_enum::number_ref: {
                 out << *((string_type*)(&_impl));
                 break;
             }
+            case value_enum::boolean: {
+                out << *((string_view_t*)(&_impl));
+                break;
+            }
             case value_enum::array: {
                 out << "[";
                 auto& array = this->array();
                 for (auto it = array.begin(); it != array.end();) {
-                    it->to(out);
+                    out << *it;
                     ++it;
                     if (likely(it != array.end())) {
                         out << ",";
@@ -550,8 +564,7 @@ public:
                 out << "{";
                 auto& object = this->object();
                 for (auto it = object.begin(); it != object.end();) {
-                    out << "\"" << it->first << "\"" << ":";
-                    it->second.to(out);
+                    out << "\"" << it->key << "\"" << ":" << it->value;
                     ++it;
                     if (likely(it != object.end())) {
                         out << ",";
@@ -577,7 +590,7 @@ public:
         bool_t ok{False};
         try {
             ok = (to(out) == text);
-        } catch (typename FixedOutStream::not_enough_space const& _) {
+        } catch (exception const& _) {
             ok = False;
         }
         return ok;
@@ -594,53 +607,64 @@ class parser final : public object {
 public:
     using size_type = size_t;
     using json_type = value<Char, Policy>;
-    using number_type = typename json_type::number_type;
     using string_type = typename json_type::string_type;
     using array_type = typename json_type::array_type;
     using object_type = typename json_type::object_type;
     using key_type = typename json_type::key_type;
+    using string_t = typename json_type::string_t;
+    using string_view_t = typename json_type::string_view_t;
 
 protected:
     size_type _capacity{16u};
 
     struct impl {
-        storage<object_type, array_type> values;
         bool_t is_object;
+        storage<object_type, array_type> values;
         key_type key;
     };
-    using impl_type = storage<impl>;
+    using impl_type = impl;
 
-    struct pool_entry {
-        std::atomic<bool_t> is_used{False};
-        std::vector<impl_type> layers{};
-    };
+    int32_t _error{0u};
 
-    static inline thread_local std::array<pool_entry, 4u> thread_pool{};
-    static inline std::array<pool_entry, 16u> pool{};
+    // struct pool_entry {
+    //     std::atomic<bool_t> is_used{False};
+    //     std::vector<impl_type> layers{};
+    // };
 
-    static inline bool_t _init_pool = []() {
-        for (auto& it : pool) {
-            it.is_used = False;
-            it.layers.reserve(32u);
-        }
-        return True;
-    }();
+    // static inline thread_local std::array<pool_entry, 4u> thread_pool{};
+    // static inline std::array<pool_entry, 16u> pool{};
 
-    static auto& _is_object_from_type(impl_type& value) {
-        return *(bool_t*)((uint8_t*)&value + offsetof(impl, is_object));
-    }
+    // static inline bool_t _init_pool = []() {
+    //     for (auto& it : pool) {
+    //         it.is_used = False;
+    //         it.layers.reserve(32u);
+    //     }
+    //     for (auto& it : thread_pool) {
+    //         it.is_used = False;
+    //         it.layers.reserve(32u);
+    //     }
+    //     return True;
+    // }();
 
-    static auto& _key_from_type(impl_type& value) {
-        return *(key_type*)((uint8_t*)&value + offsetof(impl, key));
-    }
+    static auto& _is_object_from_type(impl_type& value) { return value.is_object; }
 
-    static auto& _object_from_type(impl_type& value) {
-        return *(object_type*)((uint8_t*)&value + offsetof(impl, values));
-    }
+    // static auto& _key_from_type(impl_type& value) {
+    //     return *(key_type*)((uint8_t*)&value + offsetof(impl, key));
+    // }
 
-    static auto& _array_from_type(impl_type& value) {
-        return *(array_type*)((uint8_t*)&value + offsetof(impl, values));
-    }
+    static auto& _key_from_type(impl_type& value) { return value.key; }
+
+    // static auto& _object_from_type(impl_type& value) {
+    //     return *(object_type*)((uint8_t*)&value + offsetof(impl, values));
+    // }
+
+    static auto& _object_from_type(impl_type& value) { return *(object_type*)(&value.values); }
+
+    // static auto& _array_from_type(impl_type& value) {
+    //     return *(array_type*)((uint8_t*)&value + offsetof(impl, values));
+    // }
+
+    static auto& _array_from_type(impl_type& value) { return *(array_type*)(&value.values); }
 
     inline auto _impl_init(impl_type& value, bool_t is_object) {
         _is_object_from_type(value) = is_object;
@@ -655,15 +679,15 @@ protected:
         }
     }
 
-    inline auto _impl_init(impl_type& value, bool_t is_object, key_type&& key) {
+    inline auto _impl_init(impl_type& value, bool_t is_object, string_view_t key) {
         _impl_init(value, is_object);
         auto& _key = _key_from_type(value);
-        new (&_key) key_type(std::move(key));
+        new (&_key) key_type(key);
     }
 
-    inline auto _impl_emplace(impl_type& impl, key_type&& key, json_type&& value) {
+    inline auto _impl_emplace(impl_type& impl, string_view_t key, json_type&& value) {
         auto& object = _object_from_type(impl);
-        object.emplace_back(std::move(key), std::move(value));
+        object.emplace_back(key, std::move(value));
     }
 
     inline auto _impl_emplace(impl_type& impl, json_type&& value) {
@@ -671,53 +695,281 @@ protected:
         array.emplace_back(std::move(value));
     }
 
-    constexpr static inline bool_t is_space(char ch) noexcept {
-        return (ch == 32) | (ch == 9) | (ch == 10) | (ch == 13);
-    }
-
-    template <class Iter1, class Iter2>
-    constexpr static inline bool_t _is_null(Iter1 begin, Iter2 end) noexcept {
-        return std::distance(begin, end) == 4u && *begin++ == 'n' && *begin++ == 'u' &&
-            *begin++ == 'l' && *begin++ == 'l';
-    }
-
-    static inline constexpr bool_t whitespace_table[256] = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,  // \t, \n, \r
+    static inline constexpr bool_t skip_table[256] = {
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,  // \t, \n, \r
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // ' '
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,  // ' ', ','
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
         // ... 其余为0
     };
 
+    static inline constexpr bool_t end_table[256] = {
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,  // 0-15   (\t=9, \n=10, \r=13)
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 16-31
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,  // 32-47  (space=32, ','=44)
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 48-63
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 64-79
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,  // 80-95  (']'=93)
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 96-111
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,  // 112-127 ('}'=125)
+    };
+
+    // static inline constexpr Char escape_char_map[256] = {
+    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 0-15
+    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 16-31
+    //     0, 0, '"',  0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, '/',  // 32-47 ('"'=34, '/'=47)
+    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 48-63
+    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 64-79
+    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, '\\', 0, 0, 0,    // 80-95 ('\\'=92)
+    //     0, 0, '\b', 0, 0, 0, '\f', 0, 0, 0, 0, 0, 0,    0, 0, 0,    // 96-111
+    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 112-127
+    // };
+
+    // static inline constexpr bool_t hex_char_table[256] = {
+    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 0-15
+    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 16-31
+    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 32-47
+    //     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,  // 48-63  (0-9)
+    //     0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 64-79  (A-F)
+    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 80-95
+    //     0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 96-111 (a-f)
+    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 112-127
+    // };
+
+    // template <class Iter1, class Iter2>
+    // inline constexpr Iter1 _parse_unicode(uint32_t& code, Iter1 begin, Iter2 end) {
+    //     do {
+    //         code = 0;
+    //         for (uint8_t i = 0; i < 4; ++i) {
+    //             Char c = *begin;
+    //             if (!hex_char_table[(uint8_t)c]) {
+    //                 _error = (int32_t)error::invalid_unicode;
+    //                 break;
+    //             }
+    //             code <<= 4;
+    //             if (c >= '0' && c <= '9') {
+    //                 code |= (c - '0');
+    //             } else if (c >= 'A' && c <= 'F') {
+    //                 code |= (c - 'A' + 10);
+    //             } else if (c >= 'a' && c <= 'f') {
+    //                 code |= (c - 'a' + 10);
+    //             }
+    //             ++begin;
+    //         }
+    //         if (likely(!_error)) {
+    //             if (unlikely(code > (0xD800 - 1) && code < 0xDC00)) {
+    //                 if (*begin != '\\' || *(begin + 1) != 'u') {
+    //                     _error = (int32_t)error::invalid_unicode;
+    //                     break;
+    //                 }
+    //                 begin += 2;  // 跳过 \u
+    //                 uint16_t code2{0u};
+    //                 for (uint8_t i = 0; i < 4; ++i) {
+    //                     Char c = *begin;
+    //                     if (!hex_char_table[(uint8_t)c]) {
+    //                         _error = (int32_t)error::invalid_unicode;
+    //                         break;
+    //                     }
+    //                     code2 <<= 4;
+    //                     if (c >= '0' && c <= '9') {
+    //                         code2 |= (c - '0');
+    //                     } else if (c >= 'A' && c <= 'F') {
+    //                         code2 |= (c - 'A' + 10);
+    //                     } else if (c >= 'a' && c <= 'f') {
+    //                         code2 |= (c - 'a' + 10);
+    //                     }
+    //                     ++begin;
+    //                 }
+    //                 code = 0x10000 + ((code - 0xD800) << 10) + (code2 - 0xDC00);
+    //             }
+    //         }
+    //     } while (0);
+    //     return begin;
+    // }
+
+    // template <class Iter1, class Iter2>
+    // constexpr Iter1 _parse_string(string_wrapper* value, Iter1 begin, Iter2 end) {
+    //     ++begin;
+    //     auto start = begin;
+    //     value->is_view = True;
+    //     while (begin < end && !_error) {
+    //         if (likely(*begin != '\\')) {
+    //             if (*begin == '"') {
+    //                 if (value->is_view) {
+    //                     value->ptr = start;
+    //                     value->size = std::distance(start, begin);
+    //                 } else {
+    //                     value->ptr[value->size] = '\0';
+    //                 }
+    //                 break;
+    //             }
+    //             ++begin;
+    //         } else {
+    //             if (value->is_view) {
+    //                 value->ptr = new Char[std::distance(start, end)];
+    //                 std::copy(start, begin, value->ptr);
+    //                 value->size = std::distance(start, begin);
+    //                 value->is_view = False;
+    //             }
+    //             ++begin;
+    //             switch (*begin) {
+    //                 case '"':
+    //                     ++begin;
+    //                     value->ptr[value->size++] = '"';
+    //                     break;
+    //                 case '\\':
+    //                     ++begin;
+    //                     value->ptr[value->size++] = '\\';
+    //                     break;
+    //                 case '/':
+    //                     ++begin;
+    //                     value->ptr[value->size++] = '/';
+    //                     break;
+    //                 case 'b':
+    //                     ++begin;
+    //                     value->ptr[value->size++] = '\b';
+    //                     break;
+    //                 case 'f':
+    //                     ++begin;
+    //                     value->ptr[value->size++] = '\f';
+    //                     break;
+    //                 case 'n':
+    //                     ++begin;
+    //                     value->ptr[value->size++] = '\n';
+    //                     break;
+    //                 case 'r':
+    //                     ++begin;
+    //                     value->ptr[value->size++] = '\r';
+    //                     break;
+    //                 case 't':
+    //                     ++begin;
+    //                     value->ptr[value->size++] = '\t';
+    //                     break;
+    //                 case 'u': {
+    //                     ++begin;
+    //                     uint32_t code{0u};
+    //                     begin = _parse_unicode(code, begin, end);
+    //                     if (likely(!_error)) {
+    //                         if (code <= 0x7f) {
+    //                             value->ptr[value->size++] = (Char)code;
+    //                         } else if (code <= 0x7ff) {
+    //                             value->ptr[value->size++] = (Char)(0xc0 | (code >> 6));
+    //                             value->ptr[value->size++] = (Char)(0x80 | (code & 0x3f));
+    //                         } else if (code <= 0xffff) {
+    //                             value->ptr[value->size++] = (Char)(0xe0 | (code >> 12));
+    //                             value->ptr[value->size++] = (Char)(0x80 | ((code >> 6) & 0x3f));
+    //                             value->ptr[value->size++] = (Char)(0x80 | (code & 0x3f));
+    //                         } else if (code <= 0x10ffff) {
+    //                             value->ptr[value->size++] = (Char)(0xf0 | (code >> 18));
+    //                             value->ptr[value->size++] = (Char)(0x80 | ((code >> 12) & 0x3f));
+    //                             value->ptr[value->size++] = (Char)(0x80 | ((code >> 6) & 0x3f));
+    //                             value->ptr[value->size++] = (Char)(0x80 | (code & 0x3f));
+    //                         } else {
+    //                             _error = (int32_t)error::invalid_unicode;
+    //                             return begin;
+    //                         }
+    //                     }
+    //                 }
+    //                 default: {
+    //                     ++begin;
+    //                     value->ptr[value->size++] = *begin;
+    //                     break;
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     ++begin;
+    //     return begin;
+    // }
+
+    // // 使用SSE优化的跳过空白字符函数
+    // template <class Iter1, class Iter2>
+    // constexpr inline Iter1 _skip_whitespace_sse(Iter1 begin, Iter2 end) {
+    //     // 检查是否支持足够的数据进行SIMD处理
+    //     if (std::distance(begin, end) >= 16) {
+    //         // 预定义的空白字符掩码 (基于skip_table)
+    //         // \t=9, \n=10, \r=13, space=32, ','=44
+    //         alignas(16) static constexpr uint8_t whitespace_mask[16] = {
+    //             0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0  // 前16个字符
+    //         };
+
+    //         // 加载掩码到SSE寄存器
+    //         __m128i mask = _mm_load_si128((__m128i const*)whitespace_mask);
+
+    //         while (std::distance(begin, end) >= 16) {
+    //             // 加载16个字符
+    //             __m128i data = _mm_loadu_si128((__m128i const*)begin);
+
+    //             // 查找空白字符 (使用shuffle技术)
+    //             __m128i shuffled = _mm_shuffle_epi8(mask, data);
+    //             __m128i is_whitespace = _mm_cmpeq_epi8(shuffled, _mm_set1_epi8(1));
+
+    //             // 检查是否有非空白字符
+    //             int mask_result = _mm_movemask_epi8(is_whitespace);
+    //             if (mask_result != 0xFFFF) {  // 如果不是所有字符都是空白
+    //                 // 找到第一个非空白字符的位置
+    //                 int first_non_whitespace = __builtin_ctz(~mask_result);
+    //                 std::advance(begin, first_non_whitespace);
+    //                 break;
+    //             }
+
+    //             // 全部是空白字符，跳过16个字符
+    //             std::advance(begin, 16);
+    //         }
+    //     }
+
+    //     // 处理剩余字符或小数据集
+    //     while (begin < end && skip_table[(uint8_t)*begin]) {
+    //         ++begin;
+    //     }
+
+    //     return begin;
+    // }
+
     template <class Iter1, class Iter2>
-    constexpr static inline Iter1 _skip_space(Iter1 begin, Iter2 end) noexcept {
-        // while (begin + 3 < end) {
-        //     auto b1 = whitespace_table[*begin];
-        //     auto b2 = whitespace_table[*(begin + 1)];
-        //     auto b3 = whitespace_table[*(begin + 2)];
-        //     auto b4 = whitespace_table[*(begin + 3)];
-        //     if (!b1) {
-        //         break;
+    constexpr inline Iter1 _parse_string(string_view_t* value, Iter1 begin, Iter2 end) {
+        ++begin;
+
+        // bool_t find{False};
+        auto start = begin;
+
+        // __m128i escapes = _mm_set1_epi8('\\');
+        // __m128i quotes = _mm_set1_epi8('"');
+        // while (begin < end - 15) {
+        //     __m128i chunk = _mm_loadu_si128((__m128i*)begin);
+        //     __m128i has_escape = _mm_cmpeq_epi8(chunk, escapes);
+        //     auto has_escape_mask = _mm_movemask_epi8(has_escape);
+        //     if (has_escape_mask != 0x0000) {
+        //         auto first_escape = __builtin_ctz(~has_escape_mask);
+        //         begin += first_escape + 2;
+        //     } else {
+        //         __m128i has_quote = _mm_cmpeq_epi8(chunk, quotes);
+        //         auto has_quote_mask = _mm_movemask_epi8(has_quote);
+        //         if (has_quote_mask != 0x0000) {
+        //             auto first_quote = __builtin_ctz(has_quote_mask);
+        //             begin += first_quote;
+        //             *value = string_view_t(start, begin);
+        //             ++begin;
+        //             find = True;
+        //             break;
+        //         }
+        //         begin += 16;
         //     }
-        //     if (!b2) {
-        //         begin += 1;
-        //         break;
-        //     }
-        //     if (!b3) {
-        //         begin += 2;
-        //         break;
-        //     }
-        //     if (!b4) {
-        //         begin += 3;
-        //         break;
-        //     }
-        //     begin += 4;
         // }
-        while (begin != end && whitespace_table[*begin]) {
+
+        // if (!find) {
+        while (begin < end) {
+            if (*begin == '\\') {
+                ++begin;
+            } else if (*begin == '"') {
+                *value = string_view_t(start, begin);
+                ++begin;
+                break;
+            }
             ++begin;
         }
-        // while (begin != end && is_space(*begin)) {
-        //     ++begin;
         // }
+
         return begin;
     }
 
@@ -726,193 +978,194 @@ protected:
                             Iter1 begin,
                             Iter2 end,
                             std::vector<impl_type>& layers) {
-        int32_t result{0};
-
-        do {
-            begin = _skip_space(begin, end);
-            if (unlikely(begin == end || *begin != '{')) {
-                result = static_cast<int32_t>(error::missing_left_brace);
-                break;
+        while (begin < end && !_error) {
+            while (begin < end && skip_table[(uint8_t)*begin]) {
+                ++begin;
             }
-            ++begin;
 
-            layers.emplace_back(impl_type{});
-            _impl_init(layers.front(), True);
-
-            Iter1 key_start{};
-            Iter1 key_stop{};
-            bool_t exit{False};
-            while (begin != end && result == 0) {
-                bool is_object{_is_object_from_type(layers.back())};
-                if (is_object) {
-                    begin = _skip_space(begin, end);
-                    if (unlikely(begin == end || *begin != '"')) {
-                        result = static_cast<int32_t>(error::missing_left_quote);
-                        break;
-                    }
-                    ++begin;
-                    key_start = begin;
-                    while (begin != end && *begin != '"') {
-                        ++begin;
-                    }
-                    if (unlikely(begin == end)) {
-                        result = (int32_t)error::missing_right_brace;
-                        break;
-                    }
-                    key_stop = begin;
-                    ++begin;
-                    begin = _skip_space(begin, end);
-                    if (unlikely(begin == end || *begin != ':')) {
-                        result = static_cast<int32_t>(error::missing_colon);
-                        break;
-                    }
+            if (!layers.empty() && _is_object_from_type(layers.back())) {
+                string_view_t key;
+                begin = _parse_string(&key, begin, end);
+                while (begin < end && skip_table[(uint8_t)*begin]) {
                     ++begin;
                 }
-
-                begin = _skip_space(begin, end);
-                if (unlikely(begin == end)) {
-                    result = (int32_t)error::missing_right_brace;
-                    break;
-                }
-
                 switch (*begin) {
                     case '"': {
-                        ++begin;
-                        auto value_start = begin;
-                        while ((begin != end) && *begin != '"') {
-                            ++begin;
-                        }
-                        if (unlikely(begin == end)) {
-                            result = (int32_t)error::missing_right_brace;
-                            break;
-                        }
-                        auto value_stop = begin;
-                        ++begin;
-
-                        json_type value(string_type(value_start, value_stop));
-                        if (is_object) {
-                            _impl_emplace(layers.back(), key_type(key_start, key_stop),
-                                          std::move(value));
-                        } else {
-                            _impl_emplace(layers.back(), std::move(value));
-                        }
+                        string_view_t value;
+                        begin = _parse_string(&value, begin, end);
+                        _impl_emplace(layers.back(), key, json_type(value));
                         break;
                     }
                     case '[': {
-                        ++begin;
                         layers.emplace_back(impl_type{});
-                        if (is_object) {
-                            _impl_init(layers.back(), False, key_type(key_start, key_stop));
-                        } else {
-                            _impl_init(layers.back(), False);
-                        }
-                        continue;
-                    }
-                    case '{': {
-                        ++begin;
-                        layers.emplace_back(impl_type{});
-                        if (is_object) {
-                            _impl_init(layers.back(), True, key_type(key_start, key_stop));
-                        } else {
-                            _impl_init(layers.back(), True);
-                        }
-                        continue;
-                    }
-                    default: {
-                        auto value_start = begin;
-                        while (begin != end && *begin != ',' && *begin != '}' && *begin != ']' &&
-                               (!is_space(*begin))) {
-                            ++begin;
-                        }
-                        if (unlikely(begin == end)) {
-                            result = (int32_t)error::missing_right_brace;
-                            break;
-                        }
-                        auto value_stop = begin;
-                        auto& last_layer = layers.back();
-                        json_type value;
-                        if (likely(!_is_null(value_start, value_stop))) {
-                            value._type = value_enum::number_ref;
-                            new (&value._impl) string_type(value_start, value_stop);
-                        }
-                        if (is_object) {
-                            _impl_emplace(last_layer, key_type(key_start, key_stop),
-                                          std::move(value));
-                        } else {
-                            _impl_emplace(last_layer, std::move(value));
-                        }
-                    }
-                }
-
-                while (begin != end) {
-                    if (*begin == ',') {
+                        _impl_init(layers.back(), False, key);
                         ++begin;
                         break;
                     }
-                    if (*begin == ']') {
-                        auto& last_layer = layers.back();
-                        auto& is_object = _is_object_from_type(last_layer);
-                        if (unlikely(is_object)) {
-                            result = (int32_t)error::missing_left_brace;
-                            break;
-                        }
-
-                        json_type value;
-                        value._type = value_enum::array;
-                        auto& array = _array_from_type(last_layer);
-                        new (&value._impl) array_type(std::move(array));
-                        auto& __last_layer = layers[layers.size() - 2];
-                        if (_is_object_from_type(__last_layer)) {
-                            auto& key = _key_from_type(last_layer);
-                            _impl_emplace(__last_layer, std::move(key), std::move(value));
-                        } else {
-                            _impl_emplace(__last_layer, std::move(value));
-                        }
-                        layers.pop_back();
+                    case '{': {
+                        layers.emplace_back(impl_type{});
+                        _impl_init(layers.back(), True, key);
+                        ++begin;
+                        break;
                     }
-                    if (*begin == '}') {
-                        auto& last_layer = layers.back();
-                        auto& is_object = _is_object_from_type(last_layer);
-                        if (unlikely(!is_object)) {
-                            result = (int32_t)error::missing_left_brace;
-                            break;
+                    case 'n': {
+                        if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
+                                   *(begin + 3) == 'l')) {
+                            _impl_emplace(layers.back(), key, {});
+                        } else {
+                            _error = (int32_t)error::invalid_null;
                         }
-                        if (unlikely(layers.size() == 1u)) {
-                            exit = True;
-                            break;
+                        begin += 4;
+                        break;
+                    }
+                    case 't': {
+                        if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
+                                   *(begin + 3) == 'e')) {
+                            _impl_emplace(layers.back(), key, true);
+                        } else {
+                            _error = (int32_t)error::invalid_boolean;
                         }
+                        begin += 4;
+                        break;
+                    }
+                    case 'f': {
+                        if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
+                                   begin[4] == 'e')) {
+                            _impl_emplace(layers.back(), key, false);
+                        } else {
+                            _error = (int32_t)error::invalid_boolean;
+                        }
+                        begin += 5;
+                        break;
+                    }
+                    default: {
+                        auto start = begin;
+                        while (begin < end && !end_table[(uint8_t)*begin]) {
+                            ++begin;
+                        }
+                        auto stop = begin;
+                        if (likely(stop > start)) {
+                            json_type json_value;
+                            json_value._type = value_enum::number_ref;
+                            new (&json_value._impl) string_type(start, stop);
+                            _impl_emplace(layers.back(), key, std::move(json_value));
+                        }
+                    }
+                }
+            } else {
+                switch (*begin) {
+                    case '"': {
+                        string_view_t value;
+                        begin = _parse_string(&value, begin, end);
+                        _impl_emplace(layers.back(), json_type(value));
+                        break;
+                    }
+                    case '[': {
+                        layers.emplace_back(impl_type{});
+                        _impl_init(layers.back(), False);
+                        ++begin;
+                        continue;
+                    }
+                    case '{': {
+                        layers.emplace_back(impl_type{});
+                        _impl_init(layers.back(), True);
+                        ++begin;
+                        continue;
+                    }
+                    case 'n': {
+                        if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
+                                   *(begin + 3) == 'l')) {
+                            _impl_emplace(layers.back(), {});
+                        } else {
+                            _error = (int32_t)error::invalid_null;
+                        }
+                        begin += 4;
+                        break;
+                    }
+                    case 't': {
+                        if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
+                                   *(begin + 3) == 'e')) {
+                            _impl_emplace(layers.back(), true);
+                        } else {
+                            _error = (int32_t)error::invalid_boolean;
+                        }
+                        begin += 4;
+                        break;
+                    }
+                    case 'f': {
+                        if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
+                                   begin[4] == 'e')) {
+                            _impl_emplace(layers.back(), false);
+                        } else {
+                            _error = (int32_t)error::invalid_boolean;
+                        }
+                        begin += 5;
+                        break;
+                    }
+                    default: {
+                        auto start = begin;
+                        while (begin < end && !end_table[(uint8_t)*begin]) {
+                            ++begin;
+                        }
+                        auto stop = begin;
+                        if (likely(stop > start)) {
+                            json_type json_value;
 
-                        auto& object = _object_from_type(last_layer);
+                            json_value._type = value_enum::number_ref;
+                            new (&json_value._impl) string_type(start, stop);
+
+                            _impl_emplace(layers.back(), std::move(json_value));
+                        }
+                    }
+                }
+            }
+
+            while (begin < end) {
+                if (skip_table[(uint8_t)*begin]) {
+                    ++begin;
+                } else if (*begin == '}') {
+                    if (likely(layers.size() > 1u)) {
+                        auto& object = _object_from_type(layers.back());
                         json_type value(std::move(object));
                         auto& __last_layer = layers[layers.size() - 2];
                         if (_is_object_from_type(__last_layer)) {
-                            auto& key = _key_from_type(last_layer);
-                            _impl_emplace(__last_layer, std::move(key), std::move(value));
+                            _impl_emplace(__last_layer, _key_from_type(layers.back()),
+                                          std::move(value));
                         } else {
                             _impl_emplace(__last_layer, std::move(value));
                         }
                         layers.pop_back();
+                    } else {
+                        auto& object = _object_from_type(layers.front());
+                        *json = std::move(object);
                     }
                     ++begin;
-                }
-                if (unlikely(begin == end)) {
-                    result = (int32_t)error::missing_right_brace;
-                    break;
-                }
-                if (unlikely(result != 0 || exit)) {
+                } else if (*begin == ']') {
+                    if (likely(layers.size() > 1)) {
+                        json_type value;
+                        value._type = value_enum::array;
+                        auto& array = _array_from_type(layers.back());
+                        new (&value._impl) array_type(std::move(array));
+                        auto& __last_layer = layers[layers.size() - 2];
+                        if (_is_object_from_type(__last_layer)) {
+                            _impl_emplace(__last_layer, _key_from_type(layers.back()),
+                                          std::move(value));
+                        } else {
+                            _impl_emplace(__last_layer, std::move(value));
+                        }
+                        layers.pop_back();
+                    } else {
+                        auto& array = _array_from_type(layers.front());
+                        *json = std::move(array);
+                    }
+                    ++begin;
+                } else {
                     break;
                 }
             }
+        }
 
-            if (unlikely(result != 0)) {
-                break;
-            }
-
-            auto& object = _object_from_type(layers.front());
-            *json = json_type(std::move(object));
-        } while (false);
-
-        return result;
+        return _error;
     }
 
 public:
@@ -923,43 +1176,43 @@ public:
     template <class Iter1, class Iter2>
     int32_t operator()(json_type* json, Iter1 begin, Iter2 end) {
         int32_t result{0u};
-
-        // 首先尝试使用线程局部池
         bool_t find{False};
-        for (auto& it : thread_pool) {
-            if (it.is_used.compare_exchange_strong(find, True)) {
-                find = True;
-                it.layers.clear();
-                it.layers.reserve(_capacity);
-                try {
-                    result = _call(json, begin, end, it.layers);
-                } catch (...) {
-                    it.is_used = False;
-                    throw;
-                }
-                it.is_used = False;
-                break;
-            }
-        }
 
-        // 如果线程局部池满，则使用全局池
-        if (!find) {
-            for (auto& it : pool) {
-                if (it.is_used.compare_exchange_strong(find, True)) {
-                    find = True;
-                    it.layers.clear();
-                    it.layers.reserve(_capacity);
-                    try {
-                        result = _call(json, begin, end, it.layers);
-                    } catch (...) {
-                        it.is_used = False;
-                        throw;
-                    }
-                    it.is_used = False;
-                    break;
-                }
-            }
-        }
+        // // 首先尝试使用线程局部池
+        // for (auto& it : thread_pool) {
+        //     if (it.is_used.compare_exchange_strong(find, True)) {
+        //         find = True;
+        //         it.layers.clear();
+        //         it.layers.reserve(_capacity);
+        //         try {
+        //             result = _call(json, begin, end, it.layers);
+        //         } catch (...) {
+        //             it.is_used = False;
+        //             throw;
+        //         }
+        //         it.is_used = False;
+        //         break;
+        //     }
+        // }
+
+        // // 如果线程局部池满，则使用全局池
+        // if (!find) {
+        //     for (auto& it : pool) {
+        //         if (it.is_used.compare_exchange_strong(find, True)) {
+        //             find = True;
+        //             it.layers.clear();
+        //             it.layers.reserve(_capacity);
+        //             try {
+        //                 result = _call(json, begin, end, it.layers);
+        //             } catch (...) {
+        //                 it.is_used = False;
+        //                 throw;
+        //             }
+        //             it.is_used = False;
+        //             break;
+        //         }
+        //     }
+        // }
 
         // 最后回退到栈分配
         if (!find) {
@@ -979,7 +1232,8 @@ constexpr inline int32_t parse(value<Char, Policy>* json, Iter1 begin, Iter2 end
 
 #ifdef _GLIBCXX_FSTREAM
 template <class Char, memory_policy_t Policy>
-constexpr inline int32_t parse(value* ptr, std::basic_ifstream<Char> const& stream) noexcept {
+constexpr inline int32_t parse(value<Char, Policy>* ptr,
+                               std::basic_ifstream<Char> const& stream) noexcept {
     int32_t result{0};
 
     do {
@@ -997,7 +1251,7 @@ constexpr inline int32_t parse(value* ptr, std::basic_ifstream<Char> const& stre
 }
 
 template <class Char, memory_policy_t Policy>
-int32_t parse(value* ptr, string_view_t file) noexcept {
+int32_t parse(value<Char, Policy>* ptr, string_view_t<Char> file) noexcept {
     return parse(ptr, std::basic_ifstream<Char>{file});
 }
 #endif
