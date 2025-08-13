@@ -375,6 +375,11 @@ public:
         }
     }
 
+    self& operator<<(Char ch) {
+        emplace(&ch, &ch + 1);
+        return *this;
+    }
+
     self& operator<<(const_pointer o) {
         emplace(o, o + strlen(o));
         return *this;

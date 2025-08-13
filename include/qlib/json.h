@@ -262,6 +262,141 @@ protected:
         }
     };
 
+    template <class Iter1, class Iter2>
+    static inline constexpr int32_t _parse_unicode(uint32_t& code, Iter1& begin, Iter2 end) {
+        int32_t result{0u};
+        do {
+            code = 0;
+            for (uint8_t i = 0; i < 4; ++i) {
+                Char c = *begin;
+                code <<= 4;
+                if (c >= '0' && c <= '9') {
+                    code |= (c - '0');
+                } else if (c >= 'A' && c <= 'F') {
+                    code |= (c - 'A' + 10);
+                } else if (c >= 'a' && c <= 'f') {
+                    code |= (c - 'a' + 10);
+                } else {
+                    result = -1;
+                    break;
+                }
+                ++begin;
+            }
+            if (unlikely(!result && code > (0xD800 - 1) && code < 0xDC00)) {
+                if (*begin != '\\' || *(begin + 1) != 'u') {
+                    result = -1;
+                    break;
+                }
+                begin += 2;  // 跳过 \u
+                uint16_t code2{0u};
+                for (uint8_t i = 0; i < 4; ++i) {
+                    Char c = *begin;
+                    code2 <<= 4;
+                    if (c >= '0' && c <= '9') {
+                        code2 |= (c - '0');
+                    } else if (c >= 'A' && c <= 'F') {
+                        code2 |= (c - 'A' + 10);
+                    } else if (c >= 'a' && c <= 'f') {
+                        code2 |= (c - 'a' + 10);
+                    } else {
+                        result = -1;
+                        break;
+                    }
+                    ++begin;
+                }
+                code = 0x10000 + ((code - 0xD800) << 10) + (code2 - 0xDC00);
+            }
+        } while (0);
+        return result;
+    }
+
+    template <class Iter1, class Iter2>
+    static constexpr int32_t _parse_string(string_t* value, Iter1 begin, Iter2 end) {
+        int32_t result{0u};
+
+        auto start = begin;
+        value->reserve(std::distance(begin, end));
+        while (begin < end && result == 0) {
+            if (*begin != '\\') {
+                ++begin;
+            } else {
+                *value << string_view_t{start, begin};
+                ++begin;
+                switch (*begin) {
+                    case '"':
+                    case '\\':
+                    case '/':
+                        *value << *begin;
+                        ++begin;
+                        break;
+                    case 'b':
+                        *value << '\b';
+                        ++begin;
+                        break;
+                    case 'f':
+                        *value << '\f';
+                        ++begin;
+                        break;
+                    case 'n':
+                        *value << '\n';
+                        ++begin;
+                        break;
+                    case 'r':
+                        *value << '\r';
+                        ++begin;
+                        break;
+                    case 't':
+                        *value << '\t';
+                        ++begin;
+                        break;
+                    case 'u': {
+                        ++begin;
+                        uint32_t code{0u};
+                        result = _parse_unicode(code, begin, end);
+                        if (0 != result) {
+                            break;
+                        }
+                        if (code <= 0x7f) {
+                            *value << (char)code;
+                        } else if (code <= 0x7ff) {
+                            *value << (Char)(0xc0 | (code >> 6));
+                            *value << (Char)(0x80 | (code & 0x3f));
+                        } else if (code <= 0xffff) {
+                            *value << (Char)(0xe0 | (code >> 12));
+                            *value << (Char)(0x80 | ((code >> 6) & 0x3f));
+                            *value << (Char)(0x80 | (code & 0x3f));
+                        } else if (code <= 0x10ffff) {
+                            *value << (Char)(0xf0 | (code >> 18));
+                            *value << (Char)(0x80 | ((code >> 12) & 0x3f));
+                            *value << (Char)(0x80 | ((code >> 6) & 0x3f));
+                            *value << (Char)(0x80 | (code & 0x3f));
+                        } else {
+                            result = -1;
+                        }
+                        break;
+                    }
+                    default: {
+                        *value << *begin;
+                        ++begin;
+                    }
+                }
+                start = begin;
+            }
+        }
+        if (!result) {
+            *value << string_view_t{start, begin};
+        }
+        return result;
+    }
+
+    static constexpr string_t _convert(string_view_t s) {
+        string_t result;
+        if (_parse_string(&result, s.begin(), s.end())) {
+            throw not_string{};
+        }
+        return result;
+    }
+
 public:
     template <class T>
     class value_ref final : public object {
@@ -440,9 +575,15 @@ public:
             } else {
                 throw not_boolean();
             }
-        } else if constexpr (is_same_v<T, string_t> || is_same_v<T, string_view_t>) {
+        } else if constexpr (is_same_v<T, string_view_t>) {
             if (_type == value_enum::string) {
                 return *(string_type*)(&_impl);
+            } else {
+                throw not_string();
+            }
+        } else if constexpr (is_same_v<T, string_t>) {
+            if (_type == value_enum::string) {
+                return _convert(*(string_type*)(&_impl));
             } else {
                 throw not_string();
             }
