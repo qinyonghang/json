@@ -305,27 +305,19 @@ int32_t main(int32_t argc, char* argv[]) {
     int32_t result{0};
 
     do {
+        auto _iterations = 1000u;
+
+        if (argc > 1) {
+            auto [ptr, ec] =
+                std::from_chars(argv[1], argv[1] + string::strlen(argv[1]), _iterations);
+            if (ec != std::errc{}) {
+                result = -1;
+                break;
+            }
+        }
+
         benchmark::Initialize(&argc, argv);
         benchmark::ReportUnrecognizedArguments(argc, argv);
-
-        PARSE_WITH_JSON(json_t);
-        PARSE_WITH_JSON(json_view_t);
-
-        {
-            using json_type = json_t;
-            DECLARE_VALUE();
-            assert(value == text);
-            // std::cout << value.to() << std::endl;
-        }
-
-        {
-            using json_type = json_view_t;
-            DECLARE_VALUE();
-            assert(value == text);
-            // std::cout << value.to() << std::endl;
-        }
-
-        constexpr auto _iterations = 100000u;
 
         // 注册测试用例
         BENCHMARK(benchmark_json_parse)->Iterations(_iterations);

@@ -1,5 +1,5 @@
 
-set(TARGET_NAME test0)
+set(TARGET_NAME test_string)
 
 message(STATUS "Build ${TARGET_NAME}:")
 add_executable(${TARGET_NAME} main.cpp)

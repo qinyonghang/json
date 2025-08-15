@@ -4,23 +4,8 @@
 
 namespace qlib {
 
-[[nodiscard]] constexpr static inline bool likely(bool ok) {
-#ifdef __glibc_likely
-    return __glibc_likely(ok);
-#else
-    return ok;
-#endif
-}
-
-[[nodiscard]] constexpr static inline bool unlikely(bool ok) {
-#ifdef __glibc_unlikely
-    return __glibc_unlikely(ok);
-#else
-    return ok;
-#endif
-}
-
-enum class memory_policy_t { copy, view };
+#define NODISCARD [[nodiscard]]
+#define INLINE __attribute__((always_inline))
 
 using int8_t = char;
 using uint8_t = unsigned char;
@@ -55,8 +40,16 @@ public:
     constexpr static inline bool_t False{qlib::False};
 
 protected:
-    constexpr object() noexcept = default;
+    INLINE constexpr object() noexcept = default;
 };
+
+NODISCARD INLINE constexpr auto likely(bool_t ok) {
+    return __builtin_expect(ok, 1);
+}
+
+NODISCARD INLINE constexpr auto unlikely(bool_t ok) {
+    return __builtin_expect(ok, 0);
+}
 
 class exception : public object {
 public:

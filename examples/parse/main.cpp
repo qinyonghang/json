@@ -1,4 +1,5 @@
 #include <iostream>
+#include <functional>
 
 #include "qlib/json.h"
 #include "qlib/string.h"

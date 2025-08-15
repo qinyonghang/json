@@ -3,6 +3,8 @@
 #include "qlib/json.h"
 #include "qlib/string.h"
 
+using namespace qlib;
+
 template <class JsonType>
 static void json_dump() {
     using json_type = JsonType;
@@ -119,8 +121,8 @@ TEST(Json, JsonCopyDump) {
     json_dump<qlib::json_t>();
 }
 
-template <typename JsonType>
-static void json_parse() {
+template <class JsonType>
+static void json_parse(JsonType& value) {
     constexpr auto text = R"({
     "version": 10,
     "cmakeMinimumRequired": {
@@ -223,14 +225,12 @@ static void json_parse() {
     ]
 })";
 
-    constexpr auto text_len = qlib::string::strlen(text);
+    constexpr auto text_len = string::strlen(text);
     constexpr auto begin = text;
     constexpr auto end = begin + text_len;
 
-    using namespace qlib;
     using json_type = JsonType;
     using string_t = typename json_type::string_type;
-    json_type value;
     auto result = json::parse(&value, begin, end);
     EXPECT_EQ(result, 0);
 
@@ -392,11 +392,25 @@ static void json_parse() {
 }
 
 TEST(Json, JsonViewParse) {
-    json_parse<qlib::json_view_t>();
+    json_view_t value;
+    json_parse(value);
 }
 
-TEST(Json, JsonCopyParse) {
-    json_parse<qlib::json_t>();
+TEST(Json, JsonParse) {
+    json_t value;
+    json_parse(value);
+}
+
+TEST(Json, JsonViewPoolParse) {
+    pool_allocator_t<> pool;
+    json::value<char, json::memory_policy_t::view, pool_allocator_t<>> value(pool);
+    json_parse(value);
+}
+
+TEST(Json, JsonPoolParse) {
+    pool_allocator_t<> pool;
+    json::value<char, json::memory_policy_t::copy, pool_allocator_t<>> value(pool);
+    json_parse(value);
 }
 
 int32_t main(int32_t argc, char* argv[]) {

@@ -35,16 +35,47 @@ static auto json_parse(std::string const& filepath, benchmark::State& state) {
     }
 }
 
+template <class Char, json::memory_policy_t Policy, class Allocator>
+static auto json_pool_parse(std::string const& filepath, benchmark::State& state) {
+    std::ifstream file{filepath};
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + filepath);
+    }
+    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    auto begin = text.data();
+    auto end = begin + text.size();
+    for (auto _ : state) {
+        Allocator pool;
+        json::value<Char, Policy, Allocator> json(pool);
+        auto result = json::parse(&json, begin, end);
+        benchmark::DoNotOptimize(result);
+        benchmark::DoNotOptimize(json);
+    }
+}
+
 static auto benchmark_json_parse_canada(benchmark::State& state) {
     json_parse<json_t>(canada_json, state);
+}
+
+static auto benchmark_json_pool_parse_canada(benchmark::State& state) {
+    json_pool_parse<char, json::memory_policy_t::copy, pool_allocator_t<>>(canada_json, state);
 }
 
 static auto benchmark_json_parse_citm_catalog(benchmark::State& state) {
     json_parse<json_t>(citm_catalog_json, state);
 }
 
+static auto benchmark_json_pool_parse_citm_catalog(benchmark::State& state) {
+    json_pool_parse<char, json::memory_policy_t::copy, pool_allocator_t<>>(citm_catalog_json,
+                                                                           state);
+}
+
 static auto benchmark_json_parse_twitter(benchmark::State& state) {
     json_parse<json_t>(twitter_json, state);
+}
+
+static auto benchmark_json_pool_parse_twitter(benchmark::State& state) {
+    json_pool_parse<char, json::memory_policy_t::copy, pool_allocator_t<>>(twitter_json, state);
 }
 
 static auto benchmark_json_parse_canada_view(benchmark::State& state) {
@@ -211,26 +242,31 @@ int32_t main(int32_t argc, char* argv[]) {
         auto _iterations = 1000u;
 
         if (argc > 1) {
-            auto [ptr, ec] = std::from_chars(argv[1], argv[1] + string::strlen(argv[1]), _iterations);
+            auto [ptr, ec] =
+                std::from_chars(argv[1], argv[1] + string::strlen(argv[1]), _iterations);
             if (ec != std::errc{}) {
                 result = -1;
                 break;
             }
         }
+
         benchmark::Initialize(&argc, argv);
         benchmark::ReportUnrecognizedArguments(argc, argv);
 
         BENCHMARK(benchmark_json_parse_canada)->Iterations(_iterations);
+        // BENCHMARK(benchmark_json_pool_parse_canada)->Iterations(_iterations);
         BENCHMARK(benchmark_json_parse_canada_view)->Iterations(_iterations);
 #ifdef HAS_NLOHMANN_JSON
         BENCHMARK(benchmark_nlohmann_json_parse_canada)->Iterations(_iterations);
 #endif
         BENCHMARK(benchmark_json_parse_citm_catalog)->Iterations(_iterations);
+        // BENCHMARK(benchmark_json_pool_parse_citm_catalog)->Iterations(_iterations);
         BENCHMARK(benchmark_json_parse_citm_catalog_view)->Iterations(_iterations);
 #ifdef HAS_NLOHMANN_JSON
         BENCHMARK(benchmark_nlohmann_json_parse_citm_catalog)->Iterations(_iterations);
 #endif
         BENCHMARK(benchmark_json_parse_twitter)->Iterations(_iterations);
+        // BENCHMARK(benchmark_json_pool_parse_twitter)->Iterations(_iterations);
         BENCHMARK(benchmark_json_parse_twitter_view)->Iterations(_iterations);
 #ifdef HAS_NLOHMANN_JSON
         BENCHMARK(benchmark_nlohmann_json_parse_twitter)->Iterations(_iterations);
