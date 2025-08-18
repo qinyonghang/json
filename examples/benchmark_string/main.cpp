@@ -127,8 +127,8 @@ static auto benchmark_string_view1(benchmark::State& state) {
 }
 
 static auto benchmark_string_pool1(benchmark::State& state) {
-    using string_t = string::value<char, pool_allocator_t<>>;
-    pool_allocator_t<> pool;
+    using string_t = string::value<char, pool_allocator_t>;
+    pool_allocator_t pool;
     for (auto _ : state) {
         string_t str(text1, pool);
         benchmark::DoNotOptimize(str);
@@ -150,8 +150,8 @@ static auto benchmark_string_view2(benchmark::State& state) {
 }
 
 static auto benchmark_string_pool2(benchmark::State& state) {
-    using string_t = string::value<char, pool_allocator_t<>>;
-    pool_allocator_t<> pool;
+    using string_t = string::value<char, pool_allocator_t>;
+    pool_allocator_t pool;
     for (auto _ : state) {
         string_t str(text2, pool);
         benchmark::DoNotOptimize(str);

@@ -18,6 +18,23 @@ const static inline auto twitter_json = std::string(resources_path) + "/twitter.
 
 using namespace qlib;
 
+// template <class JsonType>
+// static auto json_parse(std::string const& filepath, benchmark::State& state) {
+//     std::ifstream file{filepath};
+//     if (!file.is_open()) {
+//         throw std::runtime_error("Failed to open file: " + filepath);
+//     }
+//     std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+//     auto begin = text.data();
+//     auto end = begin + text.size();
+//     for (auto _ : state) {
+//         JsonType json;
+//         auto result = json::parse(&json, begin, end);
+//         benchmark::DoNotOptimize(result);
+//         benchmark::DoNotOptimize(json);
+//     }
+// }
+
 template <class JsonType>
 static auto json_parse(std::string const& filepath, benchmark::State& state) {
     std::ifstream file{filepath};
@@ -28,25 +45,8 @@ static auto json_parse(std::string const& filepath, benchmark::State& state) {
     auto begin = text.data();
     auto end = begin + text.size();
     for (auto _ : state) {
-        JsonType json;
-        auto result = json::parse(&json, begin, end);
-        benchmark::DoNotOptimize(result);
-        benchmark::DoNotOptimize(json);
-    }
-}
-
-template <class Char, json::memory_policy_t Policy, class Allocator>
-static auto json_pool_parse(std::string const& filepath, benchmark::State& state) {
-    std::ifstream file{filepath};
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open file: " + filepath);
-    }
-    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    auto begin = text.data();
-    auto end = begin + text.size();
-    for (auto _ : state) {
-        Allocator pool;
-        json::value<Char, Policy, Allocator> json(pool);
+        typename JsonType::allocator_type pool;
+        JsonType json(pool);
         auto result = json::parse(&json, begin, end);
         benchmark::DoNotOptimize(result);
         benchmark::DoNotOptimize(json);
@@ -57,37 +57,48 @@ static auto benchmark_json_parse_canada(benchmark::State& state) {
     json_parse<json_t>(canada_json, state);
 }
 
+static auto benchmark_json_view_parse_canada(benchmark::State& state) {
+    json_parse<json_view_t>(canada_json, state);
+}
+
 static auto benchmark_json_pool_parse_canada(benchmark::State& state) {
-    json_pool_parse<char, json::memory_policy_t::copy, pool_allocator_t<>>(canada_json, state);
+    json_parse<json_pool_t>(canada_json, state);
+}
+
+static auto benchmark_json_view_pool_parse_canada(benchmark::State& state) {
+    json_parse<json_view_pool_t>(canada_json, state);
 }
 
 static auto benchmark_json_parse_citm_catalog(benchmark::State& state) {
     json_parse<json_t>(citm_catalog_json, state);
 }
 
+static auto benchmark_json_view_parse_citm_catalog(benchmark::State& state) {
+    json_parse<json_view_t>(citm_catalog_json, state);
+}
+
 static auto benchmark_json_pool_parse_citm_catalog(benchmark::State& state) {
-    json_pool_parse<char, json::memory_policy_t::copy, pool_allocator_t<>>(citm_catalog_json,
-                                                                           state);
+    json_parse<json_pool_t>(citm_catalog_json, state);
+}
+
+static auto benchmark_json_view_pool_parse_citm_catalog(benchmark::State& state) {
+    json_parse<json_view_pool_t>(citm_catalog_json, state);
 }
 
 static auto benchmark_json_parse_twitter(benchmark::State& state) {
     json_parse<json_t>(twitter_json, state);
 }
 
-static auto benchmark_json_pool_parse_twitter(benchmark::State& state) {
-    json_pool_parse<char, json::memory_policy_t::copy, pool_allocator_t<>>(twitter_json, state);
-}
-
-static auto benchmark_json_parse_canada_view(benchmark::State& state) {
-    json_parse<json_view_t>(canada_json, state);
-}
-
-static auto benchmark_json_parse_citm_catalog_view(benchmark::State& state) {
-    json_parse<json_view_t>(citm_catalog_json, state);
-}
-
-static auto benchmark_json_parse_twitter_view(benchmark::State& state) {
+static auto benchmark_json_view_parse_twitter(benchmark::State& state) {
     json_parse<json_view_t>(twitter_json, state);
+}
+
+static auto benchmark_json_pool_parse_twitter(benchmark::State& state) {
+    json_parse<json_pool_t>(twitter_json, state);
+}
+
+static auto benchmark_json_view_pool_parse_twitter(benchmark::State& state) {
+    json_parse<json_view_pool_t>(twitter_json, state);
 }
 
 #ifdef HAS_NLOHMANN_JSON
@@ -254,20 +265,23 @@ int32_t main(int32_t argc, char* argv[]) {
         benchmark::ReportUnrecognizedArguments(argc, argv);
 
         BENCHMARK(benchmark_json_parse_canada)->Iterations(_iterations);
-        // BENCHMARK(benchmark_json_pool_parse_canada)->Iterations(_iterations);
-        BENCHMARK(benchmark_json_parse_canada_view)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_pool_parse_canada)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_view_parse_canada)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_view_pool_parse_canada)->Iterations(_iterations);
 #ifdef HAS_NLOHMANN_JSON
         BENCHMARK(benchmark_nlohmann_json_parse_canada)->Iterations(_iterations);
 #endif
         BENCHMARK(benchmark_json_parse_citm_catalog)->Iterations(_iterations);
-        // BENCHMARK(benchmark_json_pool_parse_citm_catalog)->Iterations(_iterations);
-        BENCHMARK(benchmark_json_parse_citm_catalog_view)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_view_parse_citm_catalog)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_pool_parse_citm_catalog)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_view_pool_parse_citm_catalog)->Iterations(_iterations);
 #ifdef HAS_NLOHMANN_JSON
         BENCHMARK(benchmark_nlohmann_json_parse_citm_catalog)->Iterations(_iterations);
 #endif
         BENCHMARK(benchmark_json_parse_twitter)->Iterations(_iterations);
-        // BENCHMARK(benchmark_json_pool_parse_twitter)->Iterations(_iterations);
-        BENCHMARK(benchmark_json_parse_twitter_view)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_view_parse_twitter)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_pool_parse_twitter)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_view_pool_parse_twitter)->Iterations(_iterations);
 #ifdef HAS_NLOHMANN_JSON
         BENCHMARK(benchmark_nlohmann_json_parse_twitter)->Iterations(_iterations);
 #endif

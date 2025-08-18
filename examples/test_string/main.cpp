@@ -17,9 +17,9 @@ TEST(Json, StringView) {
 }
 
 TEST(Json, StringPool) {
-    using string_t = string::value<char, pool_allocator_t<>>;
+    using string_t = string::value<char, pool_allocator_t>;
     EXPECT_EQ(sizeof(string_t), 24);
-    pool_allocator_t<> pool;
+    pool_allocator_t pool;
     string_t str("Hello World!", pool);
     EXPECT_EQ(str, "Hello World!");
 }

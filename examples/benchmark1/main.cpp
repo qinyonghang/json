@@ -176,9 +176,29 @@ static auto benchmark_json_parse(benchmark::State& state) {
     }
 }
 
+static auto benchmark_json_pool_parse(benchmark::State& state) {
+    for (auto _ : state) {
+        pool_allocator_t pool;
+        json::value<char, json::memory_policy_t::copy, pool_allocator_t> json(pool);
+        auto result = json::parse(&json, begin, end);
+        benchmark::DoNotOptimize(result);
+        benchmark::DoNotOptimize(json);
+    }
+}
+
 static auto benchmark_json_parse_view(benchmark::State& state) {
     for (auto _ : state) {
         json_view_t json;
+        auto result = json::parse(&json, begin, end);
+        benchmark::DoNotOptimize(result);
+        benchmark::DoNotOptimize(json);
+    }
+}
+
+static auto benchmark_json_view_pool_parse(benchmark::State& state) {
+    for (auto _ : state) {
+        pool_allocator_t pool;
+        json::value<char, json::memory_policy_t::view, pool_allocator_t> json(pool);
         auto result = json::parse(&json, begin, end);
         benchmark::DoNotOptimize(result);
         benchmark::DoNotOptimize(json);
@@ -321,7 +341,9 @@ int32_t main(int32_t argc, char* argv[]) {
 
         // 注册测试用例
         BENCHMARK(benchmark_json_parse)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_pool_parse)->Iterations(_iterations);
         BENCHMARK(benchmark_json_parse_view)->Iterations(_iterations);
+        BENCHMARK(benchmark_json_view_pool_parse)->Iterations(_iterations);
 #ifdef HAS_NLOHMANN_JSON
         BENCHMARK(benchmark_nlohmann_json)->Iterations(_iterations);
 #endif

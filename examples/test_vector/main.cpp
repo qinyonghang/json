@@ -19,9 +19,9 @@ TEST(Json, Vector) {
 }
 
 TEST(Json, VectorPool) {
-    EXPECT_EQ(sizeof(vector_t<uint32_t, pool_allocator_t<>>), 24);
-    pool_allocator_t<> pool;
-    vector_t<uint32_t, pool_allocator_t<>> vec(256u, pool);
+    EXPECT_EQ(sizeof(vector_t<uint32_t, pool_allocator_t>), 24);
+    pool_allocator_t pool;
+    vector_t<uint32_t, pool_allocator_t> vec(256u, pool);
     for (auto i = 0u; i < 256u; ++i) {
         vec.emplace_back(i);
     }

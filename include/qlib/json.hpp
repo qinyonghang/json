@@ -215,9 +215,9 @@ protected:
         using reference = typename allocator_type::reference;
         return static_cast<reference&>(*this);
     }
-    NODISCARD INLINE allocator_type const& _allocator() const noexcept {
+    NODISCARD INLINE allocator_type& _allocator() const noexcept {
         using reference = typename allocator_type::reference;
-        return static_cast<reference&>(*this);
+        return const_cast<reference&>(static_cast<reference const&>(*this));
     }
 
     template <class Iter1, class Iter2>
@@ -346,14 +346,6 @@ protected:
         return result;
     }
 
-    INLINE static constexpr string_t _convert(string_view_t s) {
-        string_t result(s.size());
-        if (unlikely(_parse_string(&result, s.begin(), s.end()))) {
-            throw not_string{};
-        }
-        return result;
-    }
-
 public:
     template <class T>
     class value_ref final : public object {
@@ -377,29 +369,30 @@ public:
         INLINE value_type operator*() const noexcept { return std::move(_impl); }
     };
 
-    INLINE constexpr value() noexcept(std::is_nothrow_constructible<base>::value) = default;
+    // template <class Enable = std::enable_if_t<std::is_constructible_v<base>>>
+    INLINE constexpr value() noexcept(std::is_nothrow_constructible<base>::value){};
 
-    INLINE constexpr value(Allocator& allocator) noexcept(
+    INLINE constexpr value(allocator_type& allocator) noexcept(
         std::is_nothrow_constructible<base>::value)
             : base(allocator) {}
 
 #define REGISTER_CONSTRUCTOR(enum_value, type)                                                     \
     INLINE constexpr value(type const& value) : _type(enum_value) { new (&_impl) type(value); }    \
-    INLINE constexpr value(type const& value, Allocator& allocator)                                \
+    INLINE constexpr value(type const& value, allocator_type& allocator)                           \
             : base(allocator), _type(enum_value) {                                                 \
-        new (&_impl) type(value, allocator);                                                       \
+        new (&_impl) type(value);                                                                  \
     }                                                                                              \
     INLINE constexpr value(type&& value) : _type(enum_value) {                                     \
         new (&_impl) type(std::move(value));                                                       \
     }                                                                                              \
-    INLINE constexpr value(type&& value, Allocator& allocator)                                     \
+    INLINE constexpr value(type&& value, allocator_type& allocator)                                \
             : base(allocator), _type(enum_value) {                                                 \
-        new (&_impl) type(std::move(value), allocator);                                            \
+        new (&_impl) type(std::move(value));                                                       \
     }
 
     REGISTER_CONSTRUCTOR(value_enum::object, object_type)
     REGISTER_CONSTRUCTOR(value_enum::array, array_type)
-    REGISTER_CONSTRUCTOR(value_enum::string, string_type)
+    // REGISTER_CONSTRUCTOR(value_enum::string, string_type)
 
 #undef REGISTER_CONSTRUCTOR
 
@@ -407,12 +400,52 @@ public:
         new (&_impl) string_type(value);
     }
 
+    // template <class Enable = std::enable_if_t<!std::is_same_v<string_type, string_view_t>>>
+    INLINE constexpr value(string_view_t value, allocator_type& allocator)
+            : base(allocator), _type(value_enum::string) {
+        if constexpr (std::is_same_v<string_type, string_view_t>) {
+            // 对于view策略，忽略allocator参数
+            new (&_impl) string_type(value);
+        } else {
+            // 对于copy策略，使用allocator
+            new (&_impl) string_type(value, allocator);
+        }
+    }
+
+    INLINE constexpr value(string_view_t value) : _type(value_enum::string) {
+        new (&_impl) string_type(value);
+    }
+
+    INLINE constexpr value(string_t const& value) : _type(value_enum::string) {
+        new (&_impl) string_type(value);
+    }
+
+    INLINE constexpr value(string_t const& value, allocator_type& allocator)
+            : base(allocator), _type(value_enum::string) {
+        new (&_impl) string_type(value);
+    }
+
+    INLINE constexpr value(string_t&& value) : _type(value_enum::string) {
+        new (&_impl) string_type(std::move(value));
+    }
+
+    INLINE constexpr value(string_t&& value, allocator_type& allocator)
+            : base(allocator), _type(value_enum::string) {
+        new (&_impl) string_type(std::move(value));
+    }
+
     template <class T, class Enable = enable_if_t<is_number_v<T>>>
     constexpr value(T value) : _type(value_enum::number) {
         new (&_impl) string_t(string_t::from(value));
     }
 
+    // template <class Enable = std::enable_if_t<std::is_constructible_v<base>>>
     constexpr value(bool_t value) : _type(value_enum::boolean) {
+        new (&_impl) string_view_t(value ? true_str : false_str);
+    }
+
+    constexpr value(bool_t value, allocator_type& allocator)
+            : base(allocator), _type(value_enum::boolean) {
         new (&_impl) string_view_t(value ? true_str : false_str);
     }
 
@@ -491,7 +524,7 @@ public:
     template <class T>
     INLINE self& operator=(T&& o) {
         this->~value();
-        new (this) self(std::forward<T>(o));
+        new (this) self(std::forward<T>(o), _allocator());
         return *this;
     }
 
@@ -500,6 +533,12 @@ public:
             this->~value();
             new (this) self(o);
         }
+        return *this;
+    }
+
+    INLINE self& operator=(self&& o) {
+        this->~value();
+        new (this) self(std::move(o));
         return *this;
     }
 
@@ -538,7 +577,12 @@ public:
             }
         } else if constexpr (is_same_v<T, string_t>) {
             if (_type == value_enum::string) {
-                return _convert(*(string_type*)(&_impl));
+                auto& s = *(string_type*)(&_impl);
+                string_t result(s.size(), _allocator());
+                if (unlikely(_parse_string(&result, s.begin(), s.end()))) {
+                    throw not_string{};
+                }
+                return result;
             } else {
                 throw not_string();
             }
@@ -574,7 +618,11 @@ public:
                 return pair.value;
             }
         }
-        object.emplace_back(key, self());
+        if constexpr (std::is_same_v<key_type, string_view_t>) {
+            object.emplace_back(key, self(_allocator()));
+        } else {
+            object.emplace_back(string_t(key, _allocator()), self(_allocator()));
+        }
         return object.back().value;
     }
 
@@ -702,8 +750,9 @@ public:
 };
 
 template <class Char, memory_policy_t Policy, class Allocator>
-class parser final : public Allocator::reference {
+class parser final : public object {
 public:
+    using allocator_type = Allocator;
     using size_type = size_t;
     using json_type = value<Char, Policy, Allocator>;
     using string_type = typename json_type::string_type;
@@ -720,10 +769,61 @@ protected:
         bool_t is_object;
         storage<object_type, array_type> values;
         key_type key;
+
+        INLINE static impl create(bool_t is_object, string_view_t key, allocator_type& allocator) {
+            if constexpr (std::is_same_v<key_type, string_view_t>) {
+                impl value{.is_object = is_object, .values = {}, .key = key_type(key)};
+                if (is_object) {
+                    new (&value.values) object_type(allocator);
+                } else {
+                    new (&value.values) array_type(allocator);
+                }
+                return value;
+            } else {
+                impl value{.is_object = is_object, .values = {}, .key = key_type(key, allocator)};
+                if (is_object) {
+                    new (&value.values) object_type(allocator);
+                } else {
+                    new (&value.values) array_type(allocator);
+                }
+                return value;
+            }
+        }
+
+        INLINE static impl create(bool_t is_object, allocator_type& allocator) {
+            if constexpr (std::is_same_v<key_type, string_view_t>) {
+                impl value{.is_object = is_object, .values = {}, .key = {}};
+                if (is_object) {
+                    new (&value.values) object_type(allocator);
+                } else {
+                    new (&value.values) array_type(allocator);
+                }
+                return value;
+            } else {
+                impl value{.is_object = is_object, .values = {}, .key = key_type(allocator)};
+                if (is_object) {
+                    new (&value.values) object_type(allocator);
+                } else {
+                    new (&value.values) array_type(allocator);
+                }
+                return value;
+            }
+        }
     };
     using impl_type = impl;
 
     int32_t _error{0u};
+
+    INLINE static json_type create_number_ref(string_view_t value, allocator_type& allocator) {
+        json_type json_value(allocator);
+        json_value._type = value_enum::number_ref;
+        if constexpr (std::is_same_v<string_type, string_view_t>) {
+            new (&json_value._impl) string_type(value);
+        } else {
+            new (&json_value._impl) string_type(value, allocator);
+        }
+        return json_value;
+    }
 
     static auto& _is_object_from_type(impl_type& value) { return value.is_object; }
 
@@ -745,26 +845,13 @@ protected:
 
     static auto& _array_from_type(impl_type& value) { return *(array_type*)(&value.values); }
 
-    inline auto _impl_init(impl_type& value, bool_t is_object) {
-        _is_object_from_type(value) = is_object;
-        if (is_object) {
-            auto& object = _object_from_type(value);
-            new (&object) object_type(_capacity);
-        } else {
-            auto& array = _array_from_type(value);
-            new (&array) array_type(_capacity);
-        }
-    }
-
-    inline auto _impl_init(impl_type& value, bool_t is_object, string_view_t key) {
-        _impl_init(value, is_object);
-        auto& _key = _key_from_type(value);
-        new (&_key) key_type(key);
-    }
-
     inline auto _impl_emplace(impl_type& impl, string_view_t key, json_type&& value) {
         auto& object = _object_from_type(impl);
-        object.emplace_back(key, std::move(value));
+        if constexpr (std::is_same_v<key_type, string_view_t>) {
+            object.emplace_back(key, std::move(value));
+        } else {
+            object.emplace_back(string_type(key, value._allocator()), std::move(value));
+        }
     }
 
     inline auto _impl_emplace(impl_type& impl, json_type&& value) {
@@ -1067,25 +1154,23 @@ protected:
                     case '"': {
                         string_view_t value;
                         begin = _parse_string(&value, begin, end);
-                        _impl_emplace(layers.back(), key, json_type(value));
+                        _impl_emplace(layers.back(), key, json_type(value, json->_allocator()));
                         break;
                     }
                     case '[': {
-                        layers.emplace_back(impl_type{});
-                        _impl_init(layers.back(), False, key);
+                        layers.emplace_back(impl::create(False, key, json->_allocator()));
                         ++begin;
                         break;
                     }
                     case '{': {
-                        layers.emplace_back(impl_type{});
-                        _impl_init(layers.back(), True, key);
+                        layers.emplace_back(impl::create(True, key, json->_allocator()));
                         ++begin;
                         break;
                     }
                     case 'n': {
                         if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
                                    *(begin + 3) == 'l')) {
-                            _impl_emplace(layers.back(), key, {});
+                            _impl_emplace(layers.back(), key, json_type(json->_allocator()));
                         } else {
                             _error = (int32_t)error::invalid_null;
                         }
@@ -1095,7 +1180,7 @@ protected:
                     case 't': {
                         if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
                                    *(begin + 3) == 'e')) {
-                            _impl_emplace(layers.back(), key, true);
+                            _impl_emplace(layers.back(), key, json_type(True, json->_allocator()));
                         } else {
                             _error = (int32_t)error::invalid_boolean;
                         }
@@ -1105,7 +1190,7 @@ protected:
                     case 'f': {
                         if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
                                    begin[4] == 'e')) {
-                            _impl_emplace(layers.back(), key, false);
+                            _impl_emplace(layers.back(), key, json_type(False, json->_allocator()));
                         } else {
                             _error = (int32_t)error::invalid_boolean;
                         }
@@ -1119,10 +1204,9 @@ protected:
                         }
                         auto stop = begin;
                         if (likely(stop > start)) {
-                            json_type json_value;
-                            json_value._type = value_enum::number_ref;
-                            new (&json_value._impl) string_type(start, stop);
-                            _impl_emplace(layers.back(), key, std::move(json_value));
+                            _impl_emplace(
+                                layers.back(), key,
+                                create_number_ref(string_view_t{start, stop}, json->_allocator()));
                         }
                     }
                 }
@@ -1131,25 +1215,23 @@ protected:
                     case '"': {
                         string_view_t value;
                         begin = _parse_string(&value, begin, end);
-                        _impl_emplace(layers.back(), json_type(value));
+                        _impl_emplace(layers.back(), json_type(value, json->_allocator()));
                         break;
                     }
                     case '[': {
-                        layers.emplace_back(impl_type{});
-                        _impl_init(layers.back(), False);
+                        layers.emplace_back(impl::create(False, json->_allocator()));
                         ++begin;
                         continue;
                     }
                     case '{': {
-                        layers.emplace_back(impl_type{});
-                        _impl_init(layers.back(), True);
+                        layers.emplace_back(impl::create(True, json->_allocator()));
                         ++begin;
                         continue;
                     }
                     case 'n': {
                         if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
                                    *(begin + 3) == 'l')) {
-                            _impl_emplace(layers.back(), {});
+                            _impl_emplace(layers.back(), json_type(json->_allocator()));
                         } else {
                             _error = (int32_t)error::invalid_null;
                         }
@@ -1159,7 +1241,7 @@ protected:
                     case 't': {
                         if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
                                    *(begin + 3) == 'e')) {
-                            _impl_emplace(layers.back(), true);
+                            _impl_emplace(layers.back(), json_type(True, json->_allocator()));
                         } else {
                             _error = (int32_t)error::invalid_boolean;
                         }
@@ -1169,7 +1251,7 @@ protected:
                     case 'f': {
                         if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
                                    begin[4] == 'e')) {
-                            _impl_emplace(layers.back(), false);
+                            _impl_emplace(layers.back(), json_type(False, json->_allocator()));
                         } else {
                             _error = (int32_t)error::invalid_boolean;
                         }
@@ -1183,12 +1265,9 @@ protected:
                         }
                         auto stop = begin;
                         if (likely(stop > start)) {
-                            json_type json_value;
-
-                            json_value._type = value_enum::number_ref;
-                            new (&json_value._impl) string_type(start, stop);
-
-                            _impl_emplace(layers.back(), std::move(json_value));
+                            _impl_emplace(
+                                layers.back(),
+                                create_number_ref(string_view_t{start, stop}, json->_allocator()));
                         }
                     }
                 }
@@ -1200,7 +1279,7 @@ protected:
                 } else if (*begin == '}') {
                     if (likely(layers.size() > 1u)) {
                         auto& object = _object_from_type(layers.back());
-                        json_type value(std::move(object));
+                        json_type value(std::move(object), json->_allocator());
                         auto& __last_layer = layers[layers.size() - 2];
                         if (_is_object_from_type(__last_layer)) {
                             _impl_emplace(__last_layer, _key_from_type(layers.back()),
@@ -1216,7 +1295,7 @@ protected:
                     ++begin;
                 } else if (*begin == ']') {
                     if (likely(layers.size() > 1)) {
-                        json_type value;
+                        json_type value(json->_allocator());
                         value._type = value_enum::array;
                         auto& array = _array_from_type(layers.back());
                         new (&value._impl) array_type(std::move(array));
@@ -1305,5 +1384,7 @@ inline OutStream& operator<<(OutStream& out, value<Char, Policy, Allocator> cons
 
 using json_t = json::value<char, json::memory_policy_t::copy>;
 using json_view_t = json::value<char, json::memory_policy_t::view>;
+using json_pool_t = json::value<char, json::memory_policy_t::copy, pool_allocator_t>;
+using json_view_pool_t = json::value<char, json::memory_policy_t::view, pool_allocator_t>;
 
 };  // namespace qlib

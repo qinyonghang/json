@@ -37,38 +37,44 @@ Performance comparison with popular JSON libraries on the same hardware:
 ### 1. Parsing Performance (Parse, in MB/s)
 | JSON Library            | canada.json | citmcatalog.json | twitter.json |
 |-------------------------|-------------|------------------|--------------|
-| Nlohmann (C++11)          | 113.821     | 395.674          | 188.914      |
-| QJson View (C++17)        | 766.703     | 1257.397         | 1164.910     |
-| QJson (C++17)             | 433.341     | 655.207          | 551.014      |
-| RapidJSONAutoUTF (C++)    | 455.983     | 458.955          | 299.482      |
-| RapidJSONFullPrec (C++)   | 258.056     | 1388.862         | 570.321      |
-| RapidJSONInsitu (C++)     | 594.838     | 1658.802         | 787.266      |
-| RapidJSONIterative (C++)  | 584.473     | 1343.548         | 543.065      |
-| RapidJSON (C++)           | 623.698     | 1600.768         | 606.504      |
+| Nlohmann (C++11) | 103.945 | 368.416 | 181.022 |
+| QJson (View+Pool) | 807.360 | 1574.752 | 1387.693 |
+| QJson (Copy+Pool) | 695.873 | 1232.005 | 1073.545 |
+| QJson (View) | 731.189 | 1030.138 | 930.848 |
+| QJson (Copy) | 377.089 | 612.111 | 431.727 |
+| RapidJSON_AutoUTF | 387.924 | 394.442 | 262.079 |
+| RapidJSON_FullPrec | 246.698 | 1344.645 | 525.990 |
+| RapidJSON_Insitu | 564.049 | 1597.663 | 751.883 |
+| RapidJSON_Iterative | 550.454 | 1138.348 | 520.085 |
+| RapidJSON | 593.850 | 1574.752 | 564.971 |
 ---
 ### 2. Stringification Performance (Stringify, in MB/s)
 | JSON Library            | canada.json | citmcatalog.json | twitter.json |
 |-------------------------|-------------|------------------|--------------|
-| Nlohmann (C++11)          | 53.017      | 548.515           | 326.782       |
-| QJson View (C++17)        | 1587.847     | 4256.305          | 3885.540      |
-| QJson (C++17)             | 1247.397     | 4107.706          | 3787.790      |
-| RapidJSONAutoUTF (C++)    | 199.941     | 1404.254          | 575.223      |
-| RapidJSONFullPrec (C++)   | 320.605     | 2796.588          | 1375.020      |
-| RapidJSONInsitu (C++)     | 320.940     | 2622.914          | 1077.386      |
-| RapidJSONIterative (C++)  | 320.557     | 2480.708          | 1158.190      |
-| RapidJSON (C++)           | 320.701     | 2722.628          | 1289.633      |
+| Nlohmann (C++11) | 48.947 | 517.821 | 306.805 |
+| QJson (View+Pool) | 2172.844 | 4666.261 | 3811.764 |
+| QJson (Copy+Pool) | 1953.384 | 4653.079 | 3717.646 |
+| QJson (View) | 2036.783 | 4887.804 | 3885.540 |
+| QJson (Copy) | 1984.075 | 4692.849 | 3885.540 |
+| RapidJSON_AutoUTF | 190.688 | 1359.068 | 562.333 |
+| RapidJSON_FullPrec | 287.462 | 2549.830 | 1123.617 |
+| RapidJSON_Insitu | 300.416 | 2278.271 | 965.158 |
+| RapidJSON_Iterative | 299.870 | 2541.960 | 1129.941 |
+| RapidJSON | 302.022 | 2569.719 | 1229.099 |
 ---
 ### 3. Statistics Performance (Statistics, in MB/s)
 | JSON Library            | canada.json | citmcatalog.json | twitter.json |
 |-------------------------|-------------|------------------|--------------|
-| Nlohmann (C++11)          | 5087.132    | 4733.305         | 2055.490     |
-| QJson View (C++17)        | 4073.566    | 8808.503         | 2801.203     |
-| QJson (C++17)             | 3601.962    | 8903.730         | 2814.293     |
-| RapidJSONAutoUTF (C++)    | 6772.144    | 15394.300        | 13687.697    |
-| RapidJSONFullPrec (C++)   | 6836.846    | 15687.525        | 14339.492    |
-| RapidJSONInsitu (C++)     | 6772.144    | 14974.455        | 12814.015    |
-| RapidJSONIterative (C++)  | 6793.574    | 15838.366        | 14339.492    |
-| RapidJSON (C++)           | 3882.043    | 8715.292         | 8364.704     |
+| Nlohmann (C++11) | 4923.783 | 4537.714 | 1942.770 |
+| QJson (View+Pool) | 5740.025 | 10359.686 | 3717.646 |
+| QJson (Copy+Pool) | 5261.690 | 9863.414 | 3672.309 |
+| QJson (View) | 6925.063 | 11850.288 | 2448.206 |
+| QJson (Copy) | 5590.546 | 10981.267 | 2448.206 |
+| RapidJSON_AutoUTF | 6446.755 | 14707.054 | 13383.526 |
+| RapidJSON_FullPrec | 6168.878 | 13959.238 | 12547.056 |
+| RapidJSON_Insitu | 6446.755 | 14839.550 | 13383.526 |
+| RapidJSON_Iterative | 6389.195 | 14323.392 | 13092.580 |
+| RapidJSON | 6408.267 | 14323.392 | 12814.015 |
 ---
 ### Summary & Observations
 - **Parsing Performance**:  

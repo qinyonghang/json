@@ -402,14 +402,14 @@ TEST(Json, JsonParse) {
 }
 
 TEST(Json, JsonViewPoolParse) {
-    pool_allocator_t<> pool;
-    json::value<char, json::memory_policy_t::view, pool_allocator_t<>> value(pool);
+    pool_allocator_t pool;
+    json::value<char, json::memory_policy_t::view, pool_allocator_t> value(pool);
     json_parse(value);
 }
 
 TEST(Json, JsonPoolParse) {
-    pool_allocator_t<> pool;
-    json::value<char, json::memory_policy_t::copy, pool_allocator_t<>> value(pool);
+    pool_allocator_t pool;
+    json::value<char, json::memory_policy_t::copy, pool_allocator_t> value(pool);
     json_parse(value);
 }
 
