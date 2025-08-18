@@ -12,7 +12,7 @@ namespace json {
 enum class memory_policy_t { copy, view };
 
 template <class T>
-constexpr static inline bool_t is_number_v = is_integral_v<T> || is_floating_point_v<T>;
+constexpr static bool_t is_number_v = is_integral_v<T> || is_floating_point_v<T>;
 
 enum class error : int32_t {
     unknown = -1,
@@ -134,8 +134,9 @@ public:
     using string_type =
         typename std::conditional<Policy == memory_policy_t::view, string_view_t, string_t>::type;
     using size_type = uint32_t;
-    constexpr static inline memory_policy_t memory_policy = Policy;
-    const static inline self default_value = self{};
+    constexpr static memory_policy_t memory_policy = Policy;
+    // const static self default_value = self{};
+    const static self default_value;
 
 protected:
     value_enum _type{value_enum::null};
@@ -144,8 +145,13 @@ protected:
 
     friend class parser<Char, Policy, Allocator>;
 
-    constexpr static inline string_view_t true_str = "true";
-    constexpr static inline string_view_t false_str = "false";
+    // #if __cplusplus >= 201703L
+    constexpr static string_view_t true_str = "true";
+    constexpr static string_view_t false_str = "false";
+    // #else
+    //     constexpr static string_view_t true_str;
+    //     constexpr static string_view_t false_str;
+    // #endif
 
     struct FixedOutStream final : public Allocator::reference {
     protected:
@@ -346,6 +352,30 @@ protected:
         return result;
     }
 
+    template <class T = string_type>
+    INLINE constexpr enable_if_t<is_same_v<T, string_view_t>, void> _init_string_type(
+        string_view_t value, allocator_type&) {
+        new (&_impl) string_type(value);
+    }
+
+    template <class T = string_type>
+    INLINE constexpr enable_if_t<!is_same_v<T, string_view_t>, void> _init_string_type(
+        string_view_t value, allocator_type& allocator) {
+        new (&_impl) string_type(value, allocator);
+    }
+
+    template <class T = string_type>
+    INLINE constexpr enable_if_t<is_same_v<T, string_view_t>, void> _object_emplace(
+        object_type& object, string_view_t key) {
+        object.emplace_back(key, self(_allocator()));
+    }
+
+    template <class T = string_type>
+    INLINE constexpr enable_if_t<!is_same_v<T, string_view_t>, void> _object_emplace(
+        object_type& object, string_view_t key) {
+        object.emplace_back(string_t(key, _allocator()), self(_allocator()));
+    }
+
 public:
     template <class T>
     class value_ref final : public object {
@@ -400,16 +430,9 @@ public:
         new (&_impl) string_type(value);
     }
 
-    // template <class Enable = std::enable_if_t<!std::is_same_v<string_type, string_view_t>>>
     INLINE constexpr value(string_view_t value, allocator_type& allocator)
             : base(allocator), _type(value_enum::string) {
-        if constexpr (std::is_same_v<string_type, string_view_t>) {
-            // 对于view策略，忽略allocator参数
-            new (&_impl) string_type(value);
-        } else {
-            // 对于copy策略，使用allocator
-            new (&_impl) string_type(value, allocator);
-        }
+        _init_string_type(value, allocator);
     }
 
     INLINE constexpr value(string_view_t value) : _type(value_enum::string) {
@@ -547,50 +570,52 @@ public:
     NODISCARD INLINE constexpr auto type() const noexcept { return _type; }
 
     template <class T>
-    NODISCARD INLINE constexpr T get() const {
-        if constexpr (is_number_v<T>) {
-            if (likely(_type == value_enum::number_ref)) {
-                return (*(string_type*)(&_impl)).template to<T>();
-            } else if (likely(_type == value_enum::number)) {
-                return (*(string_t*)(&_impl)).template to<T>();
-            } else {
-                throw not_number();
-            }
-        } else if constexpr (is_same_v<T, bool_t>) {
-            if (likely(_type == value_enum::boolean)) {
-                auto& value = *(string_view_t*)(&_impl);
-                if (value == true_str) {
-                    return True;
-                } else if (value == false_str) {
-                    return False;
-                } else {
-                    throw not_boolean();
-                }
+    NODISCARD INLINE constexpr enable_if_t<is_number_v<T>, T> get() const {
+        if (likely(_type == value_enum::number_ref)) {
+            return (*(string_type*)(&_impl)).template to<T>();
+        } else if (likely(_type == value_enum::number)) {
+            return (*(string_t*)(&_impl)).template to<T>();
+        } else {
+            throw not_number();
+        }
+    }
+
+    template <class T>
+    NODISCARD INLINE constexpr enable_if_t<is_same_v<T, bool_t>, T> get() const {
+        if (likely(_type == value_enum::boolean)) {
+            auto& value = *(string_view_t*)(&_impl);
+            if (value == true_str) {
+                return True;
+            } else if (value == false_str) {
+                return False;
             } else {
                 throw not_boolean();
             }
-        } else if constexpr (is_same_v<T, string_view_t>) {
-            if (_type == value_enum::string) {
-                return *(string_type*)(&_impl);
-            } else {
-                throw not_string();
-            }
-        } else if constexpr (is_same_v<T, string_t>) {
-            if (_type == value_enum::string) {
-                auto& s = *(string_type*)(&_impl);
-                string_t result(s.size(), _allocator());
-                if (unlikely(_parse_string(&result, s.begin(), s.end()))) {
-                    throw not_string{};
-                }
-                return result;
-            } else {
-                throw not_string();
-            }
         } else {
-            static_assert(is_number_v<T> || is_same_v<T, bool_t> || is_same_v<T, string_t> ||
-                              is_same_v<T, string_view_t>,
-                          "unsupported type");
-            throw not_number();  // 这行不会执行，但为了通过编译检查
+            throw not_boolean();
+        }
+    }
+
+    template <class T>
+    NODISCARD INLINE constexpr enable_if_t<is_same_v<T, string_view_t>, T> get() const {
+        if (_type == value_enum::string) {
+            return *(string_type*)(&_impl);
+        } else {
+            throw not_string();
+        }
+    }
+
+    template <class T>
+    NODISCARD INLINE constexpr enable_if_t<is_same_v<T, string_t>, T> get() const {
+        if (_type == value_enum::string) {
+            auto& s = *(string_type*)(&_impl);
+            string_t result(s.size(), _allocator());
+            if (unlikely(_parse_string(&result, s.begin(), s.end()))) {
+                throw not_string{};
+            }
+            return result;
+        } else {
+            throw not_string();
         }
     }
 
@@ -618,11 +643,7 @@ public:
                 return pair.value;
             }
         }
-        if constexpr (std::is_same_v<key_type, string_view_t>) {
-            object.emplace_back(key, self(_allocator()));
-        } else {
-            object.emplace_back(string_t(key, _allocator()), self(_allocator()));
-        }
+        _object_emplace(object, key);
         return object.back().value;
     }
 
@@ -750,6 +771,28 @@ public:
 };
 
 template <class Char, memory_policy_t Policy, class Allocator>
+const typename value<Char, Policy, Allocator>::self value<Char, Policy, Allocator>::default_value =
+    value<Char, Policy, Allocator>{};
+
+// #if __cplusplus < 201703L
+// template <class Char, memory_policy_t Policy, class Allocator>
+// constexpr typename value<Char, Policy, Allocator>::string_view_t
+//     value<Char, Policy, Allocator>::true_str = "true";
+
+// template <class Char, memory_policy_t Policy, class Allocator>
+// constexpr typename value<Char, Policy, Allocator>::string_view_t
+//     value<Char, Policy, Allocator>::false_str = "false";
+// #endif
+
+template <class Char, memory_policy_t Policy, class Allocator>
+constexpr
+    typename value<Char, Policy, Allocator>::string_view_t value<Char, Policy, Allocator>::true_str;
+
+template <class Char, memory_policy_t Policy, class Allocator>
+constexpr typename value<Char, Policy, Allocator>::string_view_t
+    value<Char, Policy, Allocator>::false_str;
+
+template <class Char, memory_policy_t Policy, class Allocator>
 class parser final : public object {
 public:
     using allocator_type = Allocator;
@@ -770,58 +813,73 @@ protected:
         storage<object_type, array_type> values;
         key_type key;
 
-        INLINE static impl create(bool_t is_object, string_view_t key, allocator_type& allocator) {
-            if constexpr (std::is_same_v<key_type, string_view_t>) {
-                impl value{.is_object = is_object, .values = {}, .key = key_type(key)};
-                if (is_object) {
-                    new (&value.values) object_type(allocator);
-                } else {
-                    new (&value.values) array_type(allocator);
-                }
-                return value;
+        template <class T = key_type>
+        INLINE static enable_if_t<is_same_v<T, string_view_t>, impl> create(
+            bool_t is_object, string_view_t key, allocator_type& allocator) {
+            impl value{.is_object = is_object, .values = {}, .key = key_type(key)};
+            if (is_object) {
+                new (&value.values) object_type(allocator);
             } else {
-                impl value{.is_object = is_object, .values = {}, .key = key_type(key, allocator)};
-                if (is_object) {
-                    new (&value.values) object_type(allocator);
-                } else {
-                    new (&value.values) array_type(allocator);
-                }
-                return value;
+                new (&value.values) array_type(allocator);
             }
+            return value;
         }
 
-        INLINE static impl create(bool_t is_object, allocator_type& allocator) {
-            if constexpr (std::is_same_v<key_type, string_view_t>) {
-                impl value{.is_object = is_object, .values = {}, .key = {}};
-                if (is_object) {
-                    new (&value.values) object_type(allocator);
-                } else {
-                    new (&value.values) array_type(allocator);
-                }
-                return value;
+        template <class T = key_type>
+        INLINE static enable_if_t<!is_same_v<T, string_view_t>, impl> create(
+            bool_t is_object, string_view_t key, allocator_type& allocator) {
+            impl value{.is_object = is_object, .values = {}, .key = key_type(key, allocator)};
+            if (is_object) {
+                new (&value.values) object_type(allocator);
             } else {
-                impl value{.is_object = is_object, .values = {}, .key = key_type(allocator)};
-                if (is_object) {
-                    new (&value.values) object_type(allocator);
-                } else {
-                    new (&value.values) array_type(allocator);
-                }
-                return value;
+                new (&value.values) array_type(allocator);
             }
+            return value;
+        }
+
+        template <class T = key_type>
+        INLINE static enable_if_t<is_same_v<T, string_view_t>, impl> create(
+            bool_t is_object, allocator_type& allocator) {
+            impl value{.is_object = is_object, .values = {}, .key = {}};
+            if (is_object) {
+                new (&value.values) object_type(allocator);
+            } else {
+                new (&value.values) array_type(allocator);
+            }
+            return value;
+        }
+
+        template <class T = key_type>
+        INLINE static enable_if_t<!is_same_v<T, string_view_t>, impl> create(
+            bool_t is_object, allocator_type& allocator) {
+            impl value{.is_object = is_object, .values = {}, .key = key_type(allocator)};
+            if (is_object) {
+                new (&value.values) object_type(allocator);
+            } else {
+                new (&value.values) array_type(allocator);
+            }
+            return value;
         }
     };
     using impl_type = impl;
 
     int32_t _error{0u};
 
-    INLINE static json_type create_number_ref(string_view_t value, allocator_type& allocator) {
+    template <class T = key_type>
+    INLINE static enable_if_t<is_same_v<T, string_view_t>, json_type> create_number_ref(
+        string_view_t value, allocator_type& allocator) {
         json_type json_value(allocator);
         json_value._type = value_enum::number_ref;
-        if constexpr (std::is_same_v<string_type, string_view_t>) {
-            new (&json_value._impl) string_type(value);
-        } else {
-            new (&json_value._impl) string_type(value, allocator);
-        }
+        new (&json_value._impl) string_type(value);
+        return json_value;
+    }
+
+    template <class T = key_type>
+    INLINE static enable_if_t<!is_same_v<T, string_view_t>, json_type> create_number_ref(
+        string_view_t value, allocator_type& allocator) {
+        json_type json_value(allocator);
+        json_value._type = value_enum::number_ref;
+        new (&json_value._impl) string_type(value, allocator);
         return json_value;
     }
 
@@ -845,21 +903,30 @@ protected:
 
     static auto& _array_from_type(impl_type& value) { return *(array_type*)(&value.values); }
 
-    inline auto _impl_emplace(impl_type& impl, string_view_t key, json_type&& value) {
-        auto& object = _object_from_type(impl);
-        if constexpr (std::is_same_v<key_type, string_view_t>) {
-            object.emplace_back(key, std::move(value));
-        } else {
-            object.emplace_back(string_type(key, value._allocator()), std::move(value));
-        }
+    template <class T = key_type>
+    INLINE enable_if_t<is_same_v<T, string_view_t>> _emplace_object_key(object_type& object,
+                                                                        string_view_t key,
+                                                                        json_type&& value) {
+        object.emplace_back(key, std::move(value));
     }
 
-    inline auto _impl_emplace(impl_type& impl, json_type&& value) {
+    template <class T = key_type>
+    INLINE enable_if_t<!is_same_v<T, string_view_t>> _emplace_object_key(object_type& object,
+                                                                         string_view_t key,
+                                                                         json_type&& value) {
+        object.emplace_back(string_type(key, value._allocator()), std::move(value));
+    }
+
+    INLINE auto _impl_emplace(impl_type& impl, string_view_t key, json_type&& value) {
+        _emplace_object_key(_object_from_type(impl), key, std::move(value));
+    }
+
+    INLINE auto _impl_emplace(impl_type& impl, json_type&& value) {
         auto& array = _array_from_type(impl);
         array.emplace_back(std::move(value));
     }
 
-    static inline constexpr bool_t skip_table[256] = {
+    static constexpr bool_t skip_table[256] = {
         1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,  // \t, \n, \r
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,  // ' ', ','
@@ -867,7 +934,7 @@ protected:
         // ... 其余为0
     };
 
-    static inline constexpr bool_t end_table[256] = {
+    static constexpr bool_t end_table[256] = {
         1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,  // 0-15   (\t=9, \n=10, \r=13)
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 16-31
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,  // 32-47  (space=32, ','=44)
@@ -1339,6 +1406,12 @@ public:
         return result;
     }
 };
+
+template <class Char, memory_policy_t Policy, class Allocator>
+constexpr bool_t parser<Char, Policy, Allocator>::skip_table[256];
+
+template <class Char, memory_policy_t Policy, class Allocator>
+constexpr bool_t parser<Char, Policy, Allocator>::end_table[256];
 
 template <class Iter1, class Iter2, class Char, memory_policy_t Policy, class Allocator>
 INLINE constexpr int32_t parse(value<Char, Policy, Allocator>* json,

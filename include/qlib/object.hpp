@@ -6,6 +6,11 @@ namespace qlib {
 
 #define NODISCARD [[nodiscard]]
 #define INLINE __attribute__((always_inline))
+#if __cplusplus >= 201703L
+#define CONSTEXPR constexpr
+#else
+#define CONSTEXPR
+#endif
 
 using int8_t = char;
 using uint8_t = unsigned char;
@@ -36,8 +41,8 @@ public:
     using float64_t = qlib::float64_t;
 
     using bool_t = qlib::bool_t;
-    constexpr static inline bool_t True{qlib::True};
-    constexpr static inline bool_t False{qlib::False};
+    constexpr static bool_t True{qlib::True};
+    constexpr static bool_t False{qlib::False};
 
 protected:
     INLINE constexpr object() noexcept = default;
@@ -69,87 +74,87 @@ using enable_if_t = typename enable_if<Enable, T>::type;
 
 template <class T>
 struct is_integral {
-    constexpr static inline bool_t value{False};
+    constexpr static bool_t value{False};
 };
 
 template <>
 struct is_integral<int8_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <>
 struct is_integral<uint8_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <>
 struct is_integral<int16_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <>
 struct is_integral<uint16_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <>
 struct is_integral<int32_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <>
 struct is_integral<uint32_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <>
 struct is_integral<int64_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <>
 struct is_integral<uint64_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <class T>
-constexpr static inline bool_t is_integral_v = is_integral<T>::value;
+constexpr static bool_t is_integral_v = is_integral<T>::value;
 
 template <class T>
 struct is_floating_point {
-    constexpr static inline bool_t value{False};
+    constexpr static bool_t value{False};
 };
 
 template <>
 struct is_floating_point<float32_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <>
 struct is_floating_point<float64_t> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <class T>
-constexpr static inline bool_t is_floating_point_v = is_floating_point<T>::value;
+constexpr static bool_t is_floating_point_v = is_floating_point<T>::value;
 
 // template <class T, class... Ts>
 // struct is_one_of : std::disjunction<std::is_same<T, Ts>...> {};
 
 // template <class T, class... Ts>
-// constexpr static inline bool_t is_one_of_v = is_one_of<T, Ts...>::value;
+// constexpr static bool_t is_one_of_v = is_one_of<T, Ts...>::value;
 
 template <class, class>
 struct is_same {
-    constexpr static inline bool_t value{False};
+    constexpr static bool_t value{False};
 };
 
 template <class T>
 struct is_same<T, T> {
-    constexpr static inline bool_t value{True};
+    constexpr static bool_t value{True};
 };
 
 template <class T, class U>
-constexpr static inline bool_t is_same_v = is_same<T, U>::value;
+constexpr static bool_t is_same_v = is_same<T, U>::value;
 
 };  // namespace qlib

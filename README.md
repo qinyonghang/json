@@ -176,7 +176,7 @@ if (0 != result) {
 
 ## Dependencies
 
-* C++17
+* C++14
 * Standard library only (no external dependencies)
 
 Designed for C++ developers who demand ultimate performance

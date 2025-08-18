@@ -169,8 +169,8 @@ public:
     template <class T, class Enable = enable_if_t<is_integral_v<T> || is_floating_point_v<T>>>
     NODISCARD INLINE constexpr T to() const {
         T result;
-        auto [ptr, ec] = std::from_chars(begin(), end(), result);
-        if (unlikely(ec != std::errc{})) {
+        auto result_pair = std::from_chars(begin(), end(), result);
+        if (unlikely(result_pair.ec != std::errc{})) {
             throw bad_to();
         }
         return result;
@@ -220,11 +220,11 @@ protected:
     template <class T, class Enable = enable_if_t<is_integral_v<T> || is_floating_point_v<T>>>
     NODISCARD INLINE static self _from(T value, size_type capacity) {
         self result{capacity};
-        auto [ptr, ec] = std::to_chars(result.data(), result.data() + capacity, value);
-        if (unlikely(ec != std::errc{})) {
+        auto result_pair = std::to_chars(result.data(), result.data() + capacity, value);
+        if (unlikely(result_pair.ec != std::errc{})) {
             throw bad_from{};
         }
-        result._size = std::distance(result.data(), ptr);
+        result._size = std::distance(result.data(), result_pair.ptr);
         return result;
     }
 
@@ -244,14 +244,12 @@ protected:
     }
 
 public:
-    // template <class Enable = std::enable_if_t<std::is_constructible_v<base>>>
     INLINE constexpr value() noexcept(std::is_nothrow_constructible<allocator_type>::value) {}
 
     INLINE constexpr explicit value(allocator_type& allocator) noexcept(
         std::is_nothrow_constructible<allocator_type>::value)
             : base(allocator) {}
 
-    // template <class Enable = std::enable_if_t<std::is_constructible_v<base>>>
     INLINE constexpr explicit value(size_type capacity) : _capacity(capacity) {
         if (likely(capacity > 0)) {
             _impl = _allocator().template allocate<Char>(capacity + 1u);
@@ -276,13 +274,11 @@ public:
         _assign(begin, end);
     }
 
-    // template <class Enable = std::enable_if_t<std::is_constructible_v<base>>>
     INLINE value(const_pointer str) : value(str, str + strlen(str)) {}
 
     INLINE value(const_pointer str, allocator_type& allocator)
             : value(str, str + strlen(str), allocator) {}
 
-    // template <class Enable = std::enable_if_t<std::is_constructible_v<base>>>
     INLINE value(view_type o) : value(o.begin(), o.end()) {}
 
     INLINE value(view_type o, allocator_type& allocator) : value(o.begin(), o.end(), allocator) {}
@@ -294,7 +290,7 @@ public:
         o._impl = nullptr;
     }
 
-#ifdef _BASIC_STRING_H
+#ifdef _GLIBCXX_STRING_VIEW
     INLINE explicit value(std::basic_string_view<Char> str)
             : value(str.data(), str.data() + str.size()) {}
 #endif

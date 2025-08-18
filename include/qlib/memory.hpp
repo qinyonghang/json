@@ -14,6 +14,11 @@ namespace memory {
 
 constexpr bool_t is_64bit = (sizeof(void*) == 8);
 
+template <class T1, class T2>
+NODISCARD INLINE static constexpr auto align_up(T1 size, T2 alignment) noexcept {
+    return (size + (alignment - 1)) & ~(alignment - 1);
+}
+
 class bad_alloc final : public exception {
 public:
     char const* what() const noexcept override { return "bad alloc"; }
@@ -130,15 +135,10 @@ public:
     }
 
     template <class T>
-    NODISCARD INLINE constexpr T* allocate(uint64_t n) {
+    NODISCARD INLINE constexpr T* allocate(size_type n) {
         static_assert(sizeof(T) > 0, "cannot allocate zero-sized object");
 
-        uint64_t size = sizeof(T) * n;
-        if constexpr (sizeof(void*) == 8) {
-            size = (size + 7) & ~7;
-        } else {
-            size = (size + 3) & ~3;
-        }
+        size_type size = align_up(sizeof(T) * n, sizeof(void*));
 
         // if (unlikely(!n)) {
         //     return nullptr;

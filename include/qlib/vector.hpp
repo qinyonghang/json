@@ -64,7 +64,7 @@ protected:
     INLINE void _update_capacity(size_type capacity) {
         auto impl = _allocator().template allocate<value_type>(capacity);
         // ++_count;
-        if constexpr (std::is_trivially_copyable_v<value_type>) {
+        if CONSTEXPR (std::is_trivially_copyable<value_type>::value) {
             std::memcpy(impl, _impl, _size * sizeof(value_type));
         } else {
             for (size_type i = 0; i < _size; ++i) {
@@ -102,7 +102,7 @@ public:
             : base(other), _size(other._size), _capacity(other._capacity) {
         if (likely(_size > 0)) {
             _impl = _allocator().template allocate<value_type>(_capacity);
-            if constexpr (std::is_trivially_copyable_v<value_type>) {
+            if CONSTEXPR (std::is_trivially_copyable<value_type>::value) {
                 std::memcpy(_impl, other._impl, _size * sizeof(value_type));
             } else {
                 size_type i = 0;
