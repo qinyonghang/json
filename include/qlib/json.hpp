@@ -12,30 +12,7 @@ namespace json {
 enum class memory_policy { copy, view };
 
 template <class T>
-struct is_number : public false_type {};
-template <>
-struct is_number<int8_t> : public true_type {};
-template <>
-struct is_number<uint8_t> : public true_type {};
-template <>
-struct is_number<int16_t> : public true_type {};
-template <>
-struct is_number<uint16_t> : public true_type {};
-template <>
-struct is_number<int32_t> : public true_type {};
-template <>
-struct is_number<uint32_t> : public true_type {};
-template <>
-struct is_number<int64_t> : public true_type {};
-template <>
-struct is_number<uint64_t> : public true_type {};
-template <>
-struct is_number<float32_t> : public true_type {};
-template <>
-struct is_number<float64_t> : public true_type {};
-
-template <class T>
-constexpr static bool_t is_number_v = is_number<T>::value;
+constexpr static bool_t is_number_v = is_signed_v<T> || is_unsigned_v<T> || is_floating_point_v<T>;
 
 enum class error : int32_t {
     unknown = -1,
@@ -263,13 +240,8 @@ protected:
 
     friend class parser<self>;
 
-    // #if __cplusplus >= 201703L
     constexpr static string_view_t true_str = "true";
     constexpr static string_view_t false_str = "false";
-    // #else
-    //     constexpr static string_view_t true_str;
-    //     constexpr static string_view_t false_str;
-    // #endif
 
     struct FixedOutStream final : public Allocator::reference {
     protected:
@@ -989,8 +961,6 @@ protected:
     };
     using impl_type = impl;
 
-    int32_t _error{0u};
-
     template <class T = key_type>
     INLINE static enable_if_t<is_same_v<T, string_view_t>, json_type> create_number_ref(
         string_view_t value, allocator_type& allocator) {
@@ -1010,23 +980,8 @@ protected:
     }
 
     static auto& _is_object_from_type(impl_type& value) { return value.is_object; }
-
-    // static auto& _key_from_type(impl_type& value) {
-    //     return *(key_type*)((uint8_t*)&value + offsetof(impl, key));
-    // }
-
     static auto& _key_from_type(impl_type& value) { return value.key; }
-
-    // static auto& _object_from_type(impl_type& value) {
-    //     return *(object_type*)((uint8_t*)&value + offsetof(impl, values));
-    // }
-
     static auto& _object_from_type(impl_type& value) { return *(object_type*)(&value.values); }
-
-    // static auto& _array_from_type(impl_type& value) {
-    //     return *(array_type*)((uint8_t*)&value + offsetof(impl, values));
-    // }
-
     static auto& _array_from_type(impl_type& value) { return *(array_type*)(&value.values); }
 
     template <class T = key_type>
@@ -1052,12 +1007,23 @@ protected:
         array.emplace_back(move(value));
     }
 
-    static constexpr bool_t skip_table[256] = {
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,  // \t, \n, \r
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,  // ' ', ','
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
-        // ... 其余为0
+    static constexpr uint8_t char_type_table[256] = {
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 1, 1,  0, 0, 1, 0, 0,   // 0-15
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 16-31
+        1, 0, 8,  0, 0,  0,  0, 0, 0, 0, 0,  0, 1, 9, 5, 0,   // 32-47
+        9, 9, 9,  9, 9,  9,  9, 9, 9, 9, 1,  0, 0, 0, 0, 0,   // 48-63
+        0, 0, 0,  0, 0,  10, 0, 0, 0, 0, 10, 0, 0, 0, 9, 10,  // 64-79
+        0, 0, 10, 0, 10, 0,  0, 0, 0, 0, 0,  4, 0, 3, 0, 0,   // 80-95
+        0, 0, 0,  0, 0,  10, 0, 0, 0, 0, 10, 0, 0, 0, 9, 10,  // 96-111
+        0, 0, 10, 0, 10, 0,  0, 0, 0, 0, 0,  2, 0, 0, 0, 0,   // 112-127
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 128-143
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 144-159
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 160-175
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 176-191
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 192-207
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 208-223
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 224-239
+        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0    // 240-255
     };
 
     static constexpr bool_t end_table[256] = {
@@ -1072,206 +1038,213 @@ protected:
     };
 
     template <class Iter1, class Iter2>
-    CONSTEXPR INLINE Iter1 _parse_string(string_view_t* value, Iter1 begin, Iter2 end) {
-        ++begin;
-
-        auto start = begin;
-
-        while (begin < end) {
-            if (*begin == '\\') {
+    FORCE_INLINE Iter1 _parse_string(string_view_t* value, Iter1 begin, Iter2 end) {
+        Iter1 start = ++begin;
+        while (begin < end && *begin != '"') {
+            if (*begin == '\\' && ++begin < end) {
+                if (*begin == 'u') {
+                    begin += 4;
+                } else {
+                    ++begin;
+                }
+            } else {
                 ++begin;
-            } else if (*begin == '"') {
-                *value = string_view_t(start, begin);
-                ++begin;
-                break;
             }
-            ++begin;
         }
 
-        return begin;
+        *value = string_view_t(start, begin);
+        return ++begin;
     }
 
     template <class Iter1, class Iter2>
     FORCE_INLINE CONSTEXPR int32_t
     _call(json_type* json, Iter1 begin, Iter2 end, vector_t<impl_type>& layers) {
-        while (begin < end && !_error) {
-            while (begin < end && skip_table[uint8_t(*begin)]) {
-                ++begin;
-            }
+        int32_t result{0};
 
-            if (!layers.empty() && _is_object_from_type(layers.back())) {
-                string_view_t key;
-                begin = _parse_string(&key, begin, end);
-                while (begin < end && skip_table[(uint8_t)*begin]) {
+        do {
+            while (begin < end && !result) {
+                while (begin < end && char_type_table[uint8_t(*begin)] == 1) {
                     ++begin;
                 }
-                switch (*begin) {
-                    case '"': {
-                        string_view_t value;
-                        begin = _parse_string(&value, begin, end);
-                        _impl_emplace(layers.back(), key, json_type(value, json->_allocator()));
-                        break;
-                    }
-                    case '[': {
-                        layers.emplace_back(impl::create(False, key, json->_allocator()));
-                        ++begin;
-                        break;
-                    }
-                    case '{': {
-                        layers.emplace_back(impl::create(True, key, json->_allocator()));
-                        ++begin;
-                        break;
-                    }
-                    case 'n': {
-                        if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
-                                   *(begin + 3) == 'l')) {
-                            _impl_emplace(layers.back(), key, json_type(json->_allocator()));
-                        } else {
-                            _error = (int32_t)error::invalid_null;
-                        }
-                        begin += 4;
-                        break;
-                    }
-                    case 't': {
-                        if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
-                                   *(begin + 3) == 'e')) {
-                            _impl_emplace(layers.back(), key, json_type(True, json->_allocator()));
-                        } else {
-                            _error = (int32_t)error::invalid_boolean;
-                        }
-                        begin += 4;
-                        break;
-                    }
-                    case 'f': {
-                        if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
-                                   begin[4] == 'e')) {
-                            _impl_emplace(layers.back(), key, json_type(False, json->_allocator()));
-                        } else {
-                            _error = (int32_t)error::invalid_boolean;
-                        }
-                        begin += 5;
-                        break;
-                    }
-                    default: {
-                        auto start = begin;
-                        while (begin < end && !end_table[(uint8_t)*begin]) {
-                            ++begin;
-                        }
-                        auto stop = begin;
-                        if (likely(stop > start)) {
-                            _impl_emplace(
-                                layers.back(), key,
-                                create_number_ref(string_view_t{start, stop}, json->_allocator()));
-                        }
-                    }
-                }
-            } else {
-                switch (*begin) {
-                    case '"': {
-                        string_view_t value;
-                        begin = _parse_string(&value, begin, end);
-                        _impl_emplace(layers.back(), json_type(value, json->_allocator()));
-                        break;
-                    }
-                    case '[': {
-                        layers.emplace_back(impl::create(False, json->_allocator()));
-                        ++begin;
-                        continue;
-                    }
-                    case '{': {
-                        layers.emplace_back(impl::create(True, json->_allocator()));
-                        ++begin;
-                        continue;
-                    }
-                    case 'n': {
-                        if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
-                                   *(begin + 3) == 'l')) {
-                            _impl_emplace(layers.back(), json_type(json->_allocator()));
-                        } else {
-                            _error = (int32_t)error::invalid_null;
-                        }
-                        begin += 4;
-                        break;
-                    }
-                    case 't': {
-                        if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
-                                   *(begin + 3) == 'e')) {
-                            _impl_emplace(layers.back(), json_type(True, json->_allocator()));
-                        } else {
-                            _error = (int32_t)error::invalid_boolean;
-                        }
-                        begin += 4;
-                        break;
-                    }
-                    case 'f': {
-                        if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
-                                   begin[4] == 'e')) {
-                            _impl_emplace(layers.back(), json_type(False, json->_allocator()));
-                        } else {
-                            _error = (int32_t)error::invalid_boolean;
-                        }
-                        begin += 5;
-                        break;
-                    }
-                    default: {
-                        auto start = begin;
-                        while (begin < end && !end_table[(uint8_t)*begin]) {
-                            ++begin;
-                        }
-                        auto stop = begin;
-                        if (likely(stop > start)) {
-                            _impl_emplace(
-                                layers.back(),
-                                create_number_ref(string_view_t{start, stop}, json->_allocator()));
-                        }
-                    }
-                }
-            }
 
-            while (begin < end) {
-                if (skip_table[(uint8_t)*begin]) {
-                    ++begin;
-                } else if (*begin == '}') {
-                    if (likely(layers.size() > 1u)) {
-                        auto& object = _object_from_type(layers.back());
-                        json_type value(move(object), json->_allocator());
-                        auto& __last_layer = layers[layers.size() - 2];
-                        if (_is_object_from_type(__last_layer)) {
-                            _impl_emplace(__last_layer, _key_from_type(layers.back()), move(value));
-                        } else {
-                            _impl_emplace(__last_layer, move(value));
-                        }
-                        layers.pop_back();
-                    } else {
-                        auto& object = _object_from_type(layers.front());
-                        *json = move(object);
+                if (!layers.empty() && _is_object_from_type(layers.back())) {
+                    string_view_t key;
+                    begin = _parse_string(&key, begin, end);
+                    while (begin < end && char_type_table[uint8_t(*begin)] == 1) {
+                        ++begin;
                     }
-                    ++begin;
-                } else if (*begin == ']') {
-                    if (likely(layers.size() > 1)) {
-                        json_type value(json->_allocator());
-                        value._type = value_enum::array;
-                        auto& array = _array_from_type(layers.back());
-                        new (&value._impl) array_type(move(array));
-                        auto& __last_layer = layers[layers.size() - 2];
-                        if (_is_object_from_type(__last_layer)) {
-                            _impl_emplace(__last_layer, _key_from_type(layers.back()), move(value));
-                        } else {
-                            _impl_emplace(__last_layer, move(value));
+                    switch (*begin) {
+                        case '"': {
+                            string_view_t value;
+                            begin = _parse_string(&value, begin, end);
+                            _impl_emplace(layers.back(), key, json_type(value, json->_allocator()));
+                            break;
                         }
-                        layers.pop_back();
-                    } else {
-                        auto& array = _array_from_type(layers.front());
-                        *json = move(array);
+                        case '[': {
+                            layers.emplace_back(impl::create(False, key, json->_allocator()));
+                            ++begin;
+                            break;
+                        }
+                        case '{': {
+                            layers.emplace_back(impl::create(True, key, json->_allocator()));
+                            ++begin;
+                            break;
+                        }
+                        case 'n': {
+                            if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
+                                       *(begin + 3) == 'l')) {
+                                _impl_emplace(layers.back(), key, json_type(json->_allocator()));
+                            } else {
+                                result = (int32_t)error::invalid_null;
+                            }
+                            begin += 4;
+                            break;
+                        }
+                        case 't': {
+                            if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
+                                       *(begin + 3) == 'e')) {
+                                _impl_emplace(layers.back(), key,
+                                              json_type(True, json->_allocator()));
+                            } else {
+                                result = (int32_t)error::invalid_boolean;
+                            }
+                            begin += 4;
+                            break;
+                        }
+                        case 'f': {
+                            if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
+                                       begin[4] == 'e')) {
+                                _impl_emplace(layers.back(), key,
+                                              json_type(False, json->_allocator()));
+                            } else {
+                                result = (int32_t)error::invalid_boolean;
+                            }
+                            begin += 5;
+                            break;
+                        }
+                        default: {
+                            auto start = begin;
+                            while (begin < end && !end_table[(uint8_t)*begin]) {
+                                ++begin;
+                            }
+                            auto stop = begin;
+                            if (likely(stop > start)) {
+                                _impl_emplace(layers.back(), key,
+                                              create_number_ref(string_view_t{start, stop},
+                                                                json->_allocator()));
+                            }
+                        }
                     }
-                    ++begin;
                 } else {
-                    break;
+                    switch (*begin) {
+                        case '"': {
+                            string_view_t value;
+                            begin = _parse_string(&value, begin, end);
+                            _impl_emplace(layers.back(), json_type(value, json->_allocator()));
+                            break;
+                        }
+                        case '[': {
+                            layers.emplace_back(impl::create(False, json->_allocator()));
+                            ++begin;
+                            continue;
+                        }
+                        case '{': {
+                            layers.emplace_back(impl::create(True, json->_allocator()));
+                            ++begin;
+                            continue;
+                        }
+                        case 'n': {
+                            if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
+                                       *(begin + 3) == 'l')) {
+                                _impl_emplace(layers.back(), json_type(json->_allocator()));
+                            } else {
+                                result = (int32_t)error::invalid_null;
+                            }
+                            begin += 4;
+                            break;
+                        }
+                        case 't': {
+                            if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
+                                       *(begin + 3) == 'e')) {
+                                _impl_emplace(layers.back(), json_type(True, json->_allocator()));
+                            } else {
+                                result = (int32_t)error::invalid_boolean;
+                            }
+                            begin += 4;
+                            break;
+                        }
+                        case 'f': {
+                            if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
+                                       begin[4] == 'e')) {
+                                _impl_emplace(layers.back(), json_type(False, json->_allocator()));
+                            } else {
+                                result = (int32_t)error::invalid_boolean;
+                            }
+                            begin += 5;
+                            break;
+                        }
+                        default: {
+                            auto start = begin;
+                            while (begin < end && !end_table[(uint8_t)*begin]) {
+                                ++begin;
+                            }
+                            auto stop = begin;
+                            if (likely(stop > start)) {
+                                _impl_emplace(layers.back(),
+                                              create_number_ref(string_view_t{start, stop},
+                                                                json->_allocator()));
+                            }
+                        }
+                    }
+                }
+
+                while (begin < end) {
+                    if (char_type_table[uint8_t(*begin)] == 1) {
+                        ++begin;
+                    } else if (*begin == '}') {
+                        if (likely(layers.size() > 1u)) {
+                            auto& object = _object_from_type(layers.back());
+                            json_type value(move(object), json->_allocator());
+                            auto& __last_layer = layers[layers.size() - 2];
+                            if (_is_object_from_type(__last_layer)) {
+                                _impl_emplace(__last_layer, _key_from_type(layers.back()),
+                                              move(value));
+                            } else {
+                                _impl_emplace(__last_layer, move(value));
+                            }
+                            layers.pop_back();
+                        } else {
+                            auto& object = _object_from_type(layers.front());
+                            *json = move(object);
+                        }
+                        ++begin;
+                    } else if (*begin == ']') {
+                        if (likely(layers.size() > 1)) {
+                            json_type value(json->_allocator());
+                            value._type = value_enum::array;
+                            auto& array = _array_from_type(layers.back());
+                            new (&value._impl) array_type(move(array));
+                            auto& __last_layer = layers[layers.size() - 2];
+                            if (_is_object_from_type(__last_layer)) {
+                                _impl_emplace(__last_layer, _key_from_type(layers.back()),
+                                              move(value));
+                            } else {
+                                _impl_emplace(__last_layer, move(value));
+                            }
+                            layers.pop_back();
+                        } else {
+                            auto& array = _array_from_type(layers.front());
+                            *json = move(array);
+                        }
+                        ++begin;
+                    } else {
+                        break;
+                    }
                 }
             }
-        }
+        } while (false);
 
-        return _error;
+        return result;
     }
 
 public:
@@ -1287,7 +1260,7 @@ public:
 };
 
 template <class Json>
-constexpr bool_t parser<Json>::skip_table[256];
+constexpr uint8_t parser<Json>::char_type_table[256];
 
 template <class Json>
 constexpr bool_t parser<Json>::end_table[256];

@@ -15,7 +15,13 @@ set_target_properties(${TARGET_NAME} PROPERTIES
 
 target_link_libraries(${TARGET_NAME} PRIVATE qlib::json -lgtest)
 
-target_compile_options(${TARGET_NAME} PRIVATE -Wall -march=native -O3 -Wno-unused-function)
+target_compile_options(${TARGET_NAME} PRIVATE
+    -Wall
+    -Wno-unused-function
+    -march=native
+    $<$<CONFIG:Release>:-O3>
+    $<$<CONFIG:Debug>:-g>
+)
 
 if(MSVC)
     target_compile_options(${TARGET_NAME} PRIVATE /utf-8)
