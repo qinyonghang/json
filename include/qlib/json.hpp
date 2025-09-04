@@ -908,56 +908,13 @@ protected:
 
     struct impl {
         bool_t is_object;
-        storage<object_type, array_type> values;
-        key_type key;
+        void* _impl{nullptr};
 
-        template <class T = key_type>
-        INLINE static enable_if_t<is_same_v<T, string_view_t>, impl> create(
-            bool_t is_object, string_view_t key, allocator_type& allocator) {
-            impl value{.is_object = is_object, .values = {}, .key = key_type(key)};
-            if (is_object) {
-                new (&value.values) object_type(allocator);
-            } else {
-                new (&value.values) array_type(allocator);
-            }
-            return value;
-        }
+        impl(object_type* object) : is_object{True}, _impl{object} {}
+        impl(array_type* array) : is_object{False}, _impl{array} {}
 
-        template <class T = key_type>
-        INLINE static enable_if_t<!is_same_v<T, string_view_t>, impl> create(
-            bool_t is_object, string_view_t key, allocator_type& allocator) {
-            impl value{.is_object = is_object, .values = {}, .key = key_type(key, allocator)};
-            if (is_object) {
-                new (&value.values) object_type(allocator);
-            } else {
-                new (&value.values) array_type(allocator);
-            }
-            return value;
-        }
-
-        template <class T = key_type>
-        INLINE static enable_if_t<is_same_v<T, string_view_t>, impl> create(
-            bool_t is_object, allocator_type& allocator) {
-            impl value{.is_object = is_object, .values = {}, .key = {}};
-            if (is_object) {
-                new (&value.values) object_type(allocator);
-            } else {
-                new (&value.values) array_type(allocator);
-            }
-            return value;
-        }
-
-        template <class T = key_type>
-        INLINE static enable_if_t<!is_same_v<T, string_view_t>, impl> create(
-            bool_t is_object, allocator_type& allocator) {
-            impl value{.is_object = is_object, .values = {}, .key = key_type(allocator)};
-            if (is_object) {
-                new (&value.values) object_type(allocator);
-            } else {
-                new (&value.values) array_type(allocator);
-            }
-            return value;
-        }
+        object_type* object() { return (object_type*)(_impl); }
+        array_type* array() { return (array_type*)(_impl); }
     };
     using impl_type = impl;
 
@@ -979,63 +936,71 @@ protected:
         return json_value;
     }
 
-    static auto& _is_object_from_type(impl_type& value) { return value.is_object; }
-    static auto& _key_from_type(impl_type& value) { return value.key; }
-    static auto& _object_from_type(impl_type& value) { return *(object_type*)(&value.values); }
-    static auto& _array_from_type(impl_type& value) { return *(array_type*)(&value.values); }
-
     template <class T = key_type>
-    INLINE enable_if_t<is_same_v<T, string_view_t>> _emplace_object_key(object_type& object,
-                                                                        string_view_t key,
-                                                                        json_type&& value) {
-        object.emplace_back(key, move(value));
+    FORCE_INLINE enable_if_t<is_same_v<T, string_view_t>> __object_emplace(impl& layer,
+                                                                           string_view_t key,
+                                                                           json_type&& value) {
+        layer.object()->emplace_back(key, move(value));
     }
 
     template <class T = key_type>
-    INLINE enable_if_t<!is_same_v<T, string_view_t>> _emplace_object_key(object_type& object,
-                                                                         string_view_t key,
-                                                                         json_type&& value) {
-        object.emplace_back(string_type(key, value._allocator()), move(value));
+    FORCE_INLINE enable_if_t<!is_same_v<T, string_view_t>> __object_emplace(impl& layer,
+                                                                            string_view_t key,
+                                                                            json_type&& value) {
+        layer.object()->emplace_back(string_type(key, value._allocator()), move(value));
     }
 
-    INLINE auto _impl_emplace(impl_type& impl, string_view_t key, json_type&& value) {
-        _emplace_object_key(_object_from_type(impl), key, move(value));
-    }
+    class char_helper final {
+    protected:
+        uint8_t _impl[256u];
 
-    INLINE auto _impl_emplace(impl_type& impl, json_type&& value) {
-        auto& array = _array_from_type(impl);
-        array.emplace_back(move(value));
-    }
+    public:
+        enum class type : uint8_t {
+            skip = 1u,
+            quote,
+            left_brace,
+            right_brace,
+            left_bracket,
+            right_bracket,
+            n,
+            t,
+            f,
+            number,
+        };
+        CONSTEXPR INLINE char_helper() noexcept : _impl{} {
+            string_view_t __skip{" \t\n\r:,"};
+            for (auto it = __skip.begin(); it != __skip.end(); ++it) {
+                _impl[uint8_t(*it)] = 1u;
+            }
 
-    static constexpr uint8_t char_type_table[256] = {
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 1, 1,  0, 0, 1, 0, 0,   // 0-15
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 16-31
-        1, 0, 8,  0, 0,  0,  0, 0, 0, 0, 0,  0, 1, 9, 5, 0,   // 32-47
-        9, 9, 9,  9, 9,  9,  9, 9, 9, 9, 1,  0, 0, 0, 0, 0,   // 48-63
-        0, 0, 0,  0, 0,  10, 0, 0, 0, 0, 10, 0, 0, 0, 9, 10,  // 64-79
-        0, 0, 10, 0, 10, 0,  0, 0, 0, 0, 0,  4, 0, 3, 0, 0,   // 80-95
-        0, 0, 0,  0, 0,  10, 0, 0, 0, 0, 10, 0, 0, 0, 9, 10,  // 96-111
-        0, 0, 10, 0, 10, 0,  0, 0, 0, 0, 0,  2, 0, 0, 0, 0,   // 112-127
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 128-143
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 144-159
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 160-175
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 176-191
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 192-207
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 208-223
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,   // 224-239
-        0, 0, 0,  0, 0,  0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0    // 240-255
+            _impl[uint8_t('"')] = 2u;
+
+            _impl[uint8_t('{')] = 3u;
+            _impl[uint8_t('}')] = 4u;
+
+            _impl[uint8_t('[')] = 5u;
+            _impl[uint8_t(']')] = 6u;
+
+            _impl[uint8_t('n')] = 7u;
+            _impl[uint8_t('t')] = 8u;
+            _impl[uint8_t('f')] = 9u;
+
+            string_view_t __number{"0123456789eE+-."};
+            for (auto it = __number.begin(); it != __number.end(); ++it) {
+                _impl[uint8_t(*it)] = 10u;
+            }
+        }
+
+        NODISCARD FORCE_INLINE CONSTEXPR type operator[](uint8_t c) const noexcept {
+            return type(_impl[c]);
+        }
     };
 
-    static constexpr bool_t end_table[256] = {
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0,  // 0-15   (\t=9, \n=10, \r=13)
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 16-31
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,  // 32-47  (space=32, ','=44)
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 48-63
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 64-79
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,  // 80-95  (']'=93)
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 96-111
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,  // 112-127 ('}'=125)
-    };
+#if __cplusplus >= 201703L
+    CONSTEXPR static char_helper _char_helper{};
+#else  // C++14
+    CONSTEXPR static char_helper _char_helper;
+#endif
 
     template <class Iter1, class Iter2>
     FORCE_INLINE Iter1 _parse_string(string_view_t* value, Iter1 begin, Iter2 end) {
@@ -1062,60 +1027,98 @@ protected:
         int32_t result{0};
 
         do {
+            while (begin < end && _char_helper[uint8_t(*begin)] == char_helper::type::skip) {
+                ++begin;
+            }
+
+            auto& allocator = json->_allocator();
+            json_type root(allocator);
+
+            if (*begin == '{') {
+                root._type = value_enum::object;
+                new (&root._impl) object_type(_capacity, allocator);
+                layers.emplace_back(&root.object());
+            } else if (*begin == '[') {
+                root._type = value_enum::array;
+                new (&root._impl) array_type(_capacity, allocator);
+                layers.emplace_back(&root.array());
+            } else {
+                result = int32_t(error::missing_left_brace);
+                break;
+            }
+            ++begin;
+
             while (begin < end && !result) {
-                while (begin < end && char_type_table[uint8_t(*begin)] == 1) {
+                while (begin < end && _char_helper[uint8_t(*begin)] == char_helper::type::skip) {
                     ++begin;
                 }
 
-                if (!layers.empty() && _is_object_from_type(layers.back())) {
+                auto& last_layer = layers.back();
+                if (last_layer.is_object) {
+                    if (*begin == '}') {
+                        layers.pop_back();
+                        ++begin;
+                        if (layers.empty()) {
+                            result = 1;
+                            break;
+                        }
+                        continue;
+                    }
                     string_view_t key;
                     begin = _parse_string(&key, begin, end);
-                    while (begin < end && char_type_table[uint8_t(*begin)] == 1) {
+                    while (begin < end &&
+                           _char_helper[uint8_t(*begin)] == char_helper::type::skip) {
                         ++begin;
                     }
-                    switch (*begin) {
-                        case '"': {
+                    switch (_char_helper[uint8_t(*begin)]) {
+                        case char_helper::type::quote: {
                             string_view_t value;
                             begin = _parse_string(&value, begin, end);
-                            _impl_emplace(layers.back(), key, json_type(value, json->_allocator()));
+                            __object_emplace(last_layer, key, json_type(value, allocator));
                             break;
                         }
-                        case '[': {
-                            layers.emplace_back(impl::create(False, key, json->_allocator()));
+                        case char_helper::type::left_brace: {
+                            json_type value(allocator);
+                            value._type = value_enum::object;
+                            new (&value._impl) object_type(_capacity, allocator);
+                            __object_emplace(last_layer, key, move(value));
+                            layers.emplace_back(&last_layer.object()->back().value.object());
                             ++begin;
                             break;
                         }
-                        case '{': {
-                            layers.emplace_back(impl::create(True, key, json->_allocator()));
+                        case char_helper::type::left_bracket: {
+                            json_type value(allocator);
+                            value._type = value_enum::array;
+                            new (&value._impl) array_type(_capacity, allocator);
+                            __object_emplace(last_layer, key, move(value));
+                            layers.emplace_back(&last_layer.object()->back().value.array());
                             ++begin;
                             break;
                         }
-                        case 'n': {
+                        case char_helper::type::n: {
                             if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
                                        *(begin + 3) == 'l')) {
-                                _impl_emplace(layers.back(), key, json_type(json->_allocator()));
+                                __object_emplace(last_layer, key, json_type(allocator));
                             } else {
                                 result = (int32_t)error::invalid_null;
                             }
                             begin += 4;
                             break;
                         }
-                        case 't': {
+                        case char_helper::type::t: {
                             if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
                                        *(begin + 3) == 'e')) {
-                                _impl_emplace(layers.back(), key,
-                                              json_type(True, json->_allocator()));
+                                __object_emplace(last_layer, key, json_type(true, allocator));
                             } else {
                                 result = (int32_t)error::invalid_boolean;
                             }
                             begin += 4;
                             break;
                         }
-                        case 'f': {
+                        case char_helper::type::f: {
                             if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
                                        begin[4] == 'e')) {
-                                _impl_emplace(layers.back(), key,
-                                              json_type(False, json->_allocator()));
+                                __object_emplace(last_layer, key, json_type(false, allocator));
                             } else {
                                 result = (int32_t)error::invalid_boolean;
                             }
@@ -1124,59 +1127,76 @@ protected:
                         }
                         default: {
                             auto start = begin;
-                            while (begin < end && !end_table[(uint8_t)*begin]) {
+                            while (begin < end &&
+                                   _char_helper[(uint8_t)*begin] == char_helper::type::number) {
                                 ++begin;
                             }
                             auto stop = begin;
                             if (likely(stop > start)) {
-                                _impl_emplace(layers.back(), key,
-                                              create_number_ref(string_view_t{start, stop},
-                                                                json->_allocator()));
+                                __object_emplace(
+                                    last_layer, key,
+                                    create_number_ref(string_view_t{start, stop}, allocator));
                             }
                         }
                     }
                 } else {
-                    switch (*begin) {
-                        case '"': {
+                    switch (_char_helper[uint8_t(*begin)]) {
+                        case char_helper::type::quote: {
                             string_view_t value;
                             begin = _parse_string(&value, begin, end);
-                            _impl_emplace(layers.back(), json_type(value, json->_allocator()));
+                            last_layer.array()->emplace_back(value, allocator);
                             break;
                         }
-                        case '[': {
-                            layers.emplace_back(impl::create(False, json->_allocator()));
+                        case char_helper::type::left_bracket: {
+                            json_type value(allocator);
+                            value._type = value_enum::array;
+                            new (&value._impl) array_type(_capacity, allocator);
+                            last_layer.array()->emplace_back(move(value));
+                            layers.emplace_back(&last_layer.array()->back().array());
+                            ++begin;
+                            break;
+                        }
+                        case char_helper::type::right_bracket: {
+                            layers.pop_back();
+                            ++begin;
+                            if (layers.empty()) {
+                                result = 1;
+                            }
+                            break;
+                        }
+                        case char_helper::type::left_brace: {
+                            json_type value(allocator);
+                            value._type = value_enum::object;
+                            new (&value._impl) object_type(_capacity, allocator);
+                            last_layer.array()->emplace_back(move(value));
+                            layers.emplace_back(&last_layer.array()->back().object());
                             ++begin;
                             continue;
                         }
-                        case '{': {
-                            layers.emplace_back(impl::create(True, json->_allocator()));
-                            ++begin;
-                            continue;
-                        }
-                        case 'n': {
+                        case char_helper::type::n: {
                             if (likely(*(begin + 1) == 'u' && *(begin + 2) == 'l' &&
                                        *(begin + 3) == 'l')) {
-                                _impl_emplace(layers.back(), json_type(json->_allocator()));
+                                last_layer.array()->emplace_back(allocator);
                             } else {
                                 result = (int32_t)error::invalid_null;
                             }
                             begin += 4;
                             break;
                         }
-                        case 't': {
+                        case char_helper::type::t: {
                             if (likely(*(begin + 1) == 'r' && *(begin + 2) == 'u' &&
                                        *(begin + 3) == 'e')) {
-                                _impl_emplace(layers.back(), json_type(True, json->_allocator()));
+                                last_layer.array()->emplace_back(true, allocator);
                             } else {
                                 result = (int32_t)error::invalid_boolean;
                             }
                             begin += 4;
                             break;
                         }
-                        case 'f': {
+                        case char_helper::type::f: {
                             if (likely(begin[1] == 'a' && begin[2] == 'l' && begin[3] == 's' &&
                                        begin[4] == 'e')) {
-                                _impl_emplace(layers.back(), json_type(False, json->_allocator()));
+                                last_layer.array()->emplace_back(false, allocator);
                             } else {
                                 result = (int32_t)error::invalid_boolean;
                             }
@@ -1185,62 +1205,23 @@ protected:
                         }
                         default: {
                             auto start = begin;
-                            while (begin < end && !end_table[(uint8_t)*begin]) {
+                            while (begin < end &&
+                                   _char_helper[(uint8_t)*begin] == char_helper::type::number) {
                                 ++begin;
                             }
                             auto stop = begin;
                             if (likely(stop > start)) {
-                                _impl_emplace(layers.back(),
-                                              create_number_ref(string_view_t{start, stop},
-                                                                json->_allocator()));
+                                last_layer.array()->emplace_back(
+                                    create_number_ref(string_view_t{start, stop}, allocator));
                             }
                         }
                     }
                 }
+            }
 
-                while (begin < end) {
-                    if (char_type_table[uint8_t(*begin)] == 1) {
-                        ++begin;
-                    } else if (*begin == '}') {
-                        if (likely(layers.size() > 1u)) {
-                            auto& object = _object_from_type(layers.back());
-                            json_type value(move(object), json->_allocator());
-                            auto& __last_layer = layers[layers.size() - 2];
-                            if (_is_object_from_type(__last_layer)) {
-                                _impl_emplace(__last_layer, _key_from_type(layers.back()),
-                                              move(value));
-                            } else {
-                                _impl_emplace(__last_layer, move(value));
-                            }
-                            layers.pop_back();
-                        } else {
-                            auto& object = _object_from_type(layers.front());
-                            *json = move(object);
-                        }
-                        ++begin;
-                    } else if (*begin == ']') {
-                        if (likely(layers.size() > 1)) {
-                            json_type value(json->_allocator());
-                            value._type = value_enum::array;
-                            auto& array = _array_from_type(layers.back());
-                            new (&value._impl) array_type(move(array));
-                            auto& __last_layer = layers[layers.size() - 2];
-                            if (_is_object_from_type(__last_layer)) {
-                                _impl_emplace(__last_layer, _key_from_type(layers.back()),
-                                              move(value));
-                            } else {
-                                _impl_emplace(__last_layer, move(value));
-                            }
-                            layers.pop_back();
-                        } else {
-                            auto& array = _array_from_type(layers.front());
-                            *json = move(array);
-                        }
-                        ++begin;
-                    } else {
-                        break;
-                    }
-                }
+            if (result == 1) {
+                *json = move(root);
+                result = 0;
             }
         } while (false);
 
@@ -1259,11 +1240,10 @@ public:
     }
 };
 
+#if __cplusplus < 201703L
 template <class Json>
-constexpr uint8_t parser<Json>::char_type_table[256];
-
-template <class Json>
-constexpr bool_t parser<Json>::end_table[256];
+typename parser<Json>::char_helper parser<Json>::_char_helper{};
+#endif
 
 template <class Iter1, class Iter2, class Json>
 FORCE_INLINE CONSTEXPR int32_t parse(Json* json, Iter1 begin, Iter2 end) noexcept {
