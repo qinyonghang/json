@@ -9,10 +9,33 @@
 namespace qlib {
 namespace json {
 
-enum class memory_policy_t { copy, view };
+enum class memory_policy { copy, view };
 
 template <class T>
-constexpr static bool_t is_number_v = is_integral_v<T> || is_floating_point_v<T>;
+struct is_number : public false_type {};
+template <>
+struct is_number<int8_t> : public true_type {};
+template <>
+struct is_number<uint8_t> : public true_type {};
+template <>
+struct is_number<int16_t> : public true_type {};
+template <>
+struct is_number<uint16_t> : public true_type {};
+template <>
+struct is_number<int32_t> : public true_type {};
+template <>
+struct is_number<uint32_t> : public true_type {};
+template <>
+struct is_number<int64_t> : public true_type {};
+template <>
+struct is_number<uint64_t> : public true_type {};
+template <>
+struct is_number<float32_t> : public true_type {};
+template <>
+struct is_number<float64_t> : public true_type {};
+
+template <class T>
+constexpr static bool_t is_number_v = is_number<T>::value;
 
 enum class error : int32_t {
     unknown = -1,
@@ -68,6 +91,105 @@ public:
     char const* what() const noexcept override { return "not boolean"; }
 };
 
+template <class T, class Iter1, class Iter2>
+INLINE CONSTEXPR auto exp(T& value, Iter1& first, Iter2 last) {
+    if (*first == 'e' || *first == 'E') {
+        ++first;
+
+        T sign{1u};
+        if (*first == '-') {
+            sign = -1;
+            ++first;
+        } else if (*first == '+') {
+            ++first;
+        }
+
+        T _exp{0u};
+        while (likely(first < last && is_digit(*first))) {
+            _exp = _exp * 10u + static_cast<T>(*first - '0');
+            ++first;
+        }
+
+        value *= (T)__builtin_powi(10, sign * _exp);
+    }
+}
+
+template <class T, class Enable = void>
+struct converter;
+
+template <class T>
+class converter<T, enable_if_t<is_unsigned_v<T>>> : public object {
+public:
+    template <class Iter1, class Iter2>
+    INLINE CONSTEXPR static auto decode(T& __value, Iter1 __first, Iter2 __last) {
+        T _value{0u};
+        while (__first != __last && is_digit(*__first)) {
+            _value = _value * 10u + (*__first - '0');
+            ++__first;
+        }
+
+        exp(_value, __first, __last);
+
+        throw_if(__first != __last, not_number());
+
+        __value = _value;
+    }
+};
+
+template <class T>
+class converter<T, enable_if_t<is_signed_v<T>>> : public object {
+public:
+    template <class Iter1, class Iter2>
+    INLINE CONSTEXPR static auto decode(T& value, Iter1 first, Iter2 last) {
+        int8_t sign{1u};
+        if (*first == '-') {
+            sign = -1;
+            ++first;
+        }
+
+        typename unsigned_traits<T>::type _value;
+        converter<decltype(_value)>::decode(_value, first, last);
+
+        value = sign * _value;
+    }
+};
+
+template <class T>
+class converter<T, enable_if_t<is_floating_point_v<T>>> : public object {
+public:
+    template <class Iter1, class Iter2>
+    INLINE CONSTEXPR static auto decode(T& value, Iter1 first, Iter2 last) {
+        T _value{0u};
+
+        T sign = 1;
+        if (*first == '-') {
+            sign = -1;
+            ++first;
+        }
+
+        while (first < last && is_digit(*first)) {
+            _value = _value * 10u + static_cast<T>(*first - '0');
+            ++first;
+        }
+
+        if (*first == '.') {
+            ++first;
+            T base = 0.1;
+            while (first < last && is_digit(*first)) {
+                _value += static_cast<T>(*first - '0') * base;
+                base *= 0.1;
+                ++first;
+            }
+        }
+
+        exp(_value, first, last);
+
+        throw_if(first != last, not_number());
+
+        value = sign * _value;
+    }
+};
+
 template <class... Args>
 struct storage final {
     template <class... Ts>
@@ -94,6 +216,7 @@ struct storage final {
 
     static constexpr auto max_size = max_of<Args...>();
     static constexpr auto max_align = max_align_of<Args...>();
+
     union {
         uint8_t _value[max_size];
         struct __attribute__((__aligned__(max_align))) {
@@ -101,10 +224,10 @@ struct storage final {
     };
 };
 
-template <class Char, memory_policy_t Policy, class Allocator = new_allocator_t>
+template <class Json>
 class parser;
 
-template <class Char, memory_policy_t Policy, class Allocator = new_allocator_t>
+template <class Char, memory_policy Policy, class Allocator = new_allocator_t>
 class value final : public Allocator::reference {
 public:
     using base = typename Allocator::reference;
@@ -113,15 +236,13 @@ public:
     using allocator_type = Allocator;
     using string_view_t = string::view<Char>;
     using string_t = string::value<Char, Allocator>;
-    using key_type =
-        typename std::conditional<Policy == memory_policy_t::view, string_view_t, string_t>::type;
+    using key_type = conditional_t<Policy == memory_policy::view, string_view_t, string_t>;
     struct pair final {
         key_type key;
         self value;
 
         template <class Key, class Value>
-        pair(Key&& _key, Value&& _value)
-                : key(std::forward<Key>(_key)), value(std::forward<Value>(_value)) {}
+        pair(Key&& _key, Value&& _value) : key(forward<Key>(_key)), value(forward<Value>(_value)) {}
 
         pair() = default;
         pair(pair const&) = default;
@@ -131,19 +252,16 @@ public:
     };
     using object_type = vector_t<pair, Allocator>;
     using array_type = vector_t<self, Allocator>;
-    using string_type =
-        typename std::conditional<Policy == memory_policy_t::view, string_view_t, string_t>::type;
+    using string_type = conditional_t<Policy == memory_policy::view, string_view_t, string_t>;
     using size_type = uint32_t;
-    constexpr static memory_policy_t memory_policy = Policy;
-    // const static self default_value = self{};
     const static self default_value;
 
 protected:
     value_enum _type{value_enum::null};
     using impl_type = storage<object_type, array_type, string_t, string_view_t>;
-    impl_type _impl;
+    impl_type _impl{};
 
-    friend class parser<Char, Policy, Allocator>;
+    friend class parser<self>;
 
     // #if __cplusplus >= 201703L
     constexpr static string_view_t true_str = "true";
@@ -172,18 +290,19 @@ protected:
         using base = typename Allocator::reference;
 
         INLINE constexpr explicit FixedOutStream(size_type capacity) noexcept(
-            std::is_nothrow_constructible<Allocator>::value)
+            is_nothrow_constructible_v<base>)
                 : _impl(_allocator().template allocate<Char>(capacity + 1u)), _size(0u),
                   _capacity(capacity) {}
 
-        INLINE constexpr FixedOutStream(size_type capacity, Allocator& allocator) noexcept
+        INLINE constexpr FixedOutStream(size_type capacity, Allocator& allocator) noexcept(
+            is_nothrow_constructible_v<base, Allocator&>)
                 : base(allocator), _impl(_allocator().template allocate<Char>(capacity + 1u)),
                   _size(0u), _capacity(capacity) {}
 
         FixedOutStream(FixedOutStream const&) = delete;
         FixedOutStream& operator=(FixedOutStream const&) = delete;
         INLINE FixedOutStream(FixedOutStream&& o)
-                : base(std::move(o)), _impl(o._impl), _size(o._size), _capacity(o._capacity) {
+                : base(move(o)), _impl(o._impl), _size(o._size), _capacity(o._capacity) {
             o._impl = nullptr;
             o._size = 0u;
             o._capacity = 0u;
@@ -191,7 +310,7 @@ protected:
 
         INLINE FixedOutStream& operator=(FixedOutStream&& o) noexcept {
             this->~FixedOutStream();
-            new (this) FixedOutStream(std::move(o));
+            new (this) FixedOutStream(move(o));
             return *this;
         }
 
@@ -204,16 +323,14 @@ protected:
 
         INLINE FixedOutStream& operator<<(string_view_t s) {
             size_type new_size = _size + s.size();
-            if (unlikely(new_size > _capacity)) {
-                throw exception();
-            }
-            std::copy(s.begin(), s.end(), _impl + _size);
+            throw_if(new_size > _capacity);
+            copy(s.begin(), s.end(), _impl + _size);
             _size = new_size;
             return *this;
         }
 
         NODISCARD INLINE bool_t operator==(string_view_t s) const {
-            return _size == s.size() && std::equal(s.begin(), s.end(), _impl);
+            return _size == s.size() && equal(s.begin(), s.end(), _impl);
         }
     };
 
@@ -394,16 +511,16 @@ public:
         INLINE self& operator=(self&&) = default;
 
         template <class... Args>
-        INLINE value_ref(Args&&... args) : _impl(std::forward<Args>(args)...) {}
+        INLINE value_ref(Args&&... args) : _impl(forward<Args>(args)...) {}
 
-        INLINE value_type operator*() const noexcept { return std::move(_impl); }
+        INLINE value_type operator*() const noexcept { return move(_impl); }
     };
 
-    // template <class Enable = std::enable_if_t<std::is_constructible_v<base>>>
-    INLINE constexpr value() noexcept(std::is_nothrow_constructible<base>::value){};
+    // template <class Enable = enable_if_t<is_constructible_v<base>>>
+    INLINE constexpr value() noexcept(is_nothrow_constructible_v<base>){};
 
     INLINE constexpr value(allocator_type& allocator) noexcept(
-        std::is_nothrow_constructible<base>::value)
+        is_nothrow_constructible_v<base, allocator_type&>)
             : base(allocator) {}
 
 #define REGISTER_CONSTRUCTOR(enum_value, type)                                                     \
@@ -412,12 +529,10 @@ public:
             : base(allocator), _type(enum_value) {                                                 \
         new (&_impl) type(value);                                                                  \
     }                                                                                              \
-    INLINE constexpr value(type&& value) : _type(enum_value) {                                     \
-        new (&_impl) type(std::move(value));                                                       \
-    }                                                                                              \
+    INLINE constexpr value(type&& value) : _type(enum_value) { new (&_impl) type(move(value)); }   \
     INLINE constexpr value(type&& value, allocator_type& allocator)                                \
             : base(allocator), _type(enum_value) {                                                 \
-        new (&_impl) type(std::move(value));                                                       \
+        new (&_impl) type(move(value));                                                            \
     }
 
     REGISTER_CONSTRUCTOR(value_enum::object, object_type)
@@ -449,12 +564,12 @@ public:
     }
 
     INLINE constexpr value(string_t&& value) : _type(value_enum::string) {
-        new (&_impl) string_type(std::move(value));
+        new (&_impl) string_type(move(value));
     }
 
     INLINE constexpr value(string_t&& value, allocator_type& allocator)
             : base(allocator), _type(value_enum::string) {
-        new (&_impl) string_type(std::move(value));
+        new (&_impl) string_type(move(value));
     }
 
     template <class T, class Enable = enable_if_t<is_number_v<T>>>
@@ -462,7 +577,7 @@ public:
         new (&_impl) string_t(string_t::from(value));
     }
 
-    // template <class Enable = std::enable_if_t<std::is_constructible_v<base>>>
+    // template <class Enable = enable_if_t<is_constructible_v<base>>>
     constexpr value(bool_t value) : _type(value_enum::boolean) {
         new (&_impl) string_view_t(value ? true_str : false_str);
     }
@@ -502,17 +617,19 @@ public:
         }
     }
 
-    constexpr value(self&& o) : base(std::move(o)), _type(o._type), _impl(std::move(o._impl)) {
+    INLINE CONSTEXPR value(self&& o) : base(move(o)), _type{o._type}, _impl{move(o._impl)} {
         o._type = value_enum::null;
     }
 
+#ifdef _INITIALIZER_LIST
     constexpr value(std::initializer_list<value_ref<pair>> list) : _type(value_enum::object) {
         new (&_impl) object_type(list.size());
         auto object = (object_type*)(&_impl);
         for (auto const& item : list) {
-            object->emplace_back(std::move(*item));
+            object->emplace_back(move(*item));
         }
     }
+#endif
 
     ~value() noexcept {
         switch (_type) {
@@ -547,7 +664,7 @@ public:
     template <class T>
     INLINE self& operator=(T&& o) {
         this->~value();
-        new (this) self(std::forward<T>(o), _allocator());
+        new (this) self(forward<T>(o), _allocator());
         return *this;
     }
 
@@ -561,7 +678,7 @@ public:
 
     INLINE self& operator=(self&& o) {
         this->~value();
-        new (this) self(std::move(o));
+        new (this) self(move(o));
         return *this;
     }
 
@@ -572,11 +689,19 @@ public:
     template <class T>
     NODISCARD INLINE constexpr enable_if_t<is_number_v<T>, T> get() const {
         if (likely(_type == value_enum::number_ref)) {
-            return (*(string_type*)(&_impl)).template to<T>();
+            auto& value = *(string_type*)(&_impl);
+            T value_number{};
+            converter<T>::decode(value_number, value.begin(), value.end());
+            return value_number;
+            // return (*(string_type*)(&_impl)).template to<T>();
         } else if (likely(_type == value_enum::number)) {
-            return (*(string_t*)(&_impl)).template to<T>();
+            auto& value = *(string_t*)(&_impl);
+            T value_number{};
+            converter<T>::decode(value_number, value.begin(), value.end());
+            return value_number;
+            // return (*(string_t*)(&_impl)).template to<T>();
         } else {
-            throw not_number();
+            __throw(not_number{});
         }
     }
 
@@ -589,10 +714,10 @@ public:
             } else if (value == false_str) {
                 return False;
             } else {
-                throw not_boolean();
+                __throw(not_boolean{});
             }
         } else {
-            throw not_boolean();
+            __throw(not_boolean{});
         }
     }
 
@@ -601,7 +726,7 @@ public:
         if (_type == value_enum::string) {
             return *(string_type*)(&_impl);
         } else {
-            throw not_string();
+            __throw(not_string{});
         }
     }
 
@@ -611,18 +736,18 @@ public:
             auto& s = *(string_type*)(&_impl);
             string_t result(s.size(), _allocator());
             if (unlikely(_parse_string(&result, s.begin(), s.end()))) {
-                throw not_string{};
+                __throw(not_string{});
             }
             return result;
         } else {
-            throw not_string();
+            __throw(not_string{});
         }
     }
 
     template <class T>
     NODISCARD INLINE constexpr T get(T&& default_value) const {
         if (empty()) {
-            return std::forward<T>(default_value);
+            return forward<T>(default_value);
         }
         return get<T>();
     }
@@ -647,31 +772,31 @@ public:
         return object.back().value;
     }
 
-    NODISCARD INLINE object_type& object() {
-        if (unlikely(_type != value_enum::object)) {
-            throw not_object();
-        }
+    NODISCARD FORCE_INLINE object_type& object() {
+        throw_if(_type != value_enum::object, not_object{});
         return *(object_type*)(&_impl);
     }
-    NODISCARD INLINE object_type const& object() const { return const_cast<self&>(*this).object(); }
-
-    NODISCARD INLINE array_type& array() {
-        if (unlikely(_type != value_enum::array)) {
-            throw not_array{};
-        }
-        auto impl = (array_type*)(&_impl);
-        return *impl;
+    NODISCARD FORCE_INLINE object_type const& object() const {
+        return const_cast<self&>(*this).object();
     }
 
-    NODISCARD INLINE array_type const& array() const { return const_cast<self&>(*this).array(); }
+    NODISCARD FORCE_INLINE array_type& array() {
+        throw_if(_type != value_enum::array, not_array{});
+        return *(array_type*)(&_impl);
+    }
 
+    NODISCARD FORCE_INLINE array_type const& array() const {
+        return const_cast<self&>(*this).array();
+    }
+
+#ifdef _INITIALIZER_LIST
     NODISCARD INLINE static self object(std::initializer_list<value_ref<pair>> list) {
         self value;
         value._type = value_enum::object;
         new (&value._impl) object_type(list.size());
         auto object = (object_type*)(&value._impl);
         for (auto const& item : list) {
-            object->emplace_back(std::move(*item));
+            object->emplace_back(move(*item));
         }
         return value;
     }
@@ -682,10 +807,11 @@ public:
         new (&value._impl) array_type(list.size());
         auto array = (array_type*)(&value._impl);
         for (auto const& item : list) {
-            array->emplace_back(std::move(*item));
+            array->emplace_back(move(*item));
         }
         return value;
     }
+#endif
 
     template <class OutStream>
     constexpr OutStream& to(OutStream& out) const {
@@ -770,34 +896,34 @@ public:
     }
 };
 
-template <class Char, memory_policy_t Policy, class Allocator>
+template <class Char, memory_policy Policy, class Allocator>
 const typename value<Char, Policy, Allocator>::self value<Char, Policy, Allocator>::default_value =
     value<Char, Policy, Allocator>{};
 
 // #if __cplusplus < 201703L
-// template <class Char, memory_policy_t Policy, class Allocator>
+// template <class Char, memory_policy Policy, class Allocator>
 // constexpr typename value<Char, Policy, Allocator>::string_view_t
 //     value<Char, Policy, Allocator>::true_str = "true";
 
-// template <class Char, memory_policy_t Policy, class Allocator>
+// template <class Char, memory_policy Policy, class Allocator>
 // constexpr typename value<Char, Policy, Allocator>::string_view_t
 //     value<Char, Policy, Allocator>::false_str = "false";
 // #endif
 
-template <class Char, memory_policy_t Policy, class Allocator>
+template <class Char, memory_policy Policy, class Allocator>
 constexpr
     typename value<Char, Policy, Allocator>::string_view_t value<Char, Policy, Allocator>::true_str;
 
-template <class Char, memory_policy_t Policy, class Allocator>
+template <class Char, memory_policy Policy, class Allocator>
 constexpr typename value<Char, Policy, Allocator>::string_view_t
     value<Char, Policy, Allocator>::false_str;
 
-template <class Char, memory_policy_t Policy, class Allocator>
+template <class Json>
 class parser final : public object {
 public:
-    using allocator_type = Allocator;
     using size_type = size_t;
-    using json_type = value<Char, Policy, Allocator>;
+    using json_type = Json;
+    using allocator_type = typename Json::allocator_type;
     using string_type = typename json_type::string_type;
     using array_type = typename json_type::array_type;
     using object_type = typename json_type::object_type;
@@ -907,23 +1033,23 @@ protected:
     INLINE enable_if_t<is_same_v<T, string_view_t>> _emplace_object_key(object_type& object,
                                                                         string_view_t key,
                                                                         json_type&& value) {
-        object.emplace_back(key, std::move(value));
+        object.emplace_back(key, move(value));
     }
 
     template <class T = key_type>
     INLINE enable_if_t<!is_same_v<T, string_view_t>> _emplace_object_key(object_type& object,
                                                                          string_view_t key,
                                                                          json_type&& value) {
-        object.emplace_back(string_type(key, value._allocator()), std::move(value));
+        object.emplace_back(string_type(key, value._allocator()), move(value));
     }
 
     INLINE auto _impl_emplace(impl_type& impl, string_view_t key, json_type&& value) {
-        _emplace_object_key(_object_from_type(impl), key, std::move(value));
+        _emplace_object_key(_object_from_type(impl), key, move(value));
     }
 
     INLINE auto _impl_emplace(impl_type& impl, json_type&& value) {
         auto& array = _array_from_type(impl);
-        array.emplace_back(std::move(value));
+        array.emplace_back(move(value));
     }
 
     static constexpr bool_t skip_table[256] = {
@@ -945,250 +1071,12 @@ protected:
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,  // 112-127 ('}'=125)
     };
 
-    // static inline constexpr Char escape_char_map[256] = {
-    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 0-15
-    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 16-31
-    //     0, 0, '"',  0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, '/',  // 32-47 ('"'=34, '/'=47)
-    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 48-63
-    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 64-79
-    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, '\\', 0, 0, 0,    // 80-95 ('\\'=92)
-    //     0, 0, '\b', 0, 0, 0, '\f', 0, 0, 0, 0, 0, 0,    0, 0, 0,    // 96-111
-    //     0, 0, 0,    0, 0, 0, 0,    0, 0, 0, 0, 0, 0,    0, 0, 0,    // 112-127
-    // };
-
-    // static inline constexpr bool_t hex_char_table[256] = {
-    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 0-15
-    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 16-31
-    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 32-47
-    //     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,  // 48-63  (0-9)
-    //     0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 64-79  (A-F)
-    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 80-95
-    //     0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 96-111 (a-f)
-    //     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 112-127
-    // };
-
-    // template <class Iter1, class Iter2>
-    // inline constexpr Iter1 _parse_unicode(uint32_t& code, Iter1 begin, Iter2 end) {
-    //     do {
-    //         code = 0;
-    //         for (uint8_t i = 0; i < 4; ++i) {
-    //             Char c = *begin;
-    //             if (!hex_char_table[(uint8_t)c]) {
-    //                 _error = (int32_t)error::invalid_unicode;
-    //                 break;
-    //             }
-    //             code <<= 4;
-    //             if (c >= '0' && c <= '9') {
-    //                 code |= (c - '0');
-    //             } else if (c >= 'A' && c <= 'F') {
-    //                 code |= (c - 'A' + 10);
-    //             } else if (c >= 'a' && c <= 'f') {
-    //                 code |= (c - 'a' + 10);
-    //             }
-    //             ++begin;
-    //         }
-    //         if (likely(!_error)) {
-    //             if (unlikely(code > (0xD800 - 1) && code < 0xDC00)) {
-    //                 if (*begin != '\\' || *(begin + 1) != 'u') {
-    //                     _error = (int32_t)error::invalid_unicode;
-    //                     break;
-    //                 }
-    //                 begin += 2;  // 跳过 \u
-    //                 uint16_t code2{0u};
-    //                 for (uint8_t i = 0; i < 4; ++i) {
-    //                     Char c = *begin;
-    //                     if (!hex_char_table[(uint8_t)c]) {
-    //                         _error = (int32_t)error::invalid_unicode;
-    //                         break;
-    //                     }
-    //                     code2 <<= 4;
-    //                     if (c >= '0' && c <= '9') {
-    //                         code2 |= (c - '0');
-    //                     } else if (c >= 'A' && c <= 'F') {
-    //                         code2 |= (c - 'A' + 10);
-    //                     } else if (c >= 'a' && c <= 'f') {
-    //                         code2 |= (c - 'a' + 10);
-    //                     }
-    //                     ++begin;
-    //                 }
-    //                 code = 0x10000 + ((code - 0xD800) << 10) + (code2 - 0xDC00);
-    //             }
-    //         }
-    //     } while (0);
-    //     return begin;
-    // }
-
-    // template <class Iter1, class Iter2>
-    // constexpr Iter1 _parse_string(string_wrapper* value, Iter1 begin, Iter2 end) {
-    //     ++begin;
-    //     auto start = begin;
-    //     value->is_view = True;
-    //     while (begin < end && !_error) {
-    //         if (likely(*begin != '\\')) {
-    //             if (*begin == '"') {
-    //                 if (value->is_view) {
-    //                     value->ptr = start;
-    //                     value->size = std::distance(start, begin);
-    //                 } else {
-    //                     value->ptr[value->size] = '\0';
-    //                 }
-    //                 break;
-    //             }
-    //             ++begin;
-    //         } else {
-    //             if (value->is_view) {
-    //                 value->ptr = new Char[std::distance(start, end)];
-    //                 std::copy(start, begin, value->ptr);
-    //                 value->size = std::distance(start, begin);
-    //                 value->is_view = False;
-    //             }
-    //             ++begin;
-    //             switch (*begin) {
-    //                 case '"':
-    //                     ++begin;
-    //                     value->ptr[value->size++] = '"';
-    //                     break;
-    //                 case '\\':
-    //                     ++begin;
-    //                     value->ptr[value->size++] = '\\';
-    //                     break;
-    //                 case '/':
-    //                     ++begin;
-    //                     value->ptr[value->size++] = '/';
-    //                     break;
-    //                 case 'b':
-    //                     ++begin;
-    //                     value->ptr[value->size++] = '\b';
-    //                     break;
-    //                 case 'f':
-    //                     ++begin;
-    //                     value->ptr[value->size++] = '\f';
-    //                     break;
-    //                 case 'n':
-    //                     ++begin;
-    //                     value->ptr[value->size++] = '\n';
-    //                     break;
-    //                 case 'r':
-    //                     ++begin;
-    //                     value->ptr[value->size++] = '\r';
-    //                     break;
-    //                 case 't':
-    //                     ++begin;
-    //                     value->ptr[value->size++] = '\t';
-    //                     break;
-    //                 case 'u': {
-    //                     ++begin;
-    //                     uint32_t code{0u};
-    //                     begin = _parse_unicode(code, begin, end);
-    //                     if (likely(!_error)) {
-    //                         if (code <= 0x7f) {
-    //                             value->ptr[value->size++] = (Char)code;
-    //                         } else if (code <= 0x7ff) {
-    //                             value->ptr[value->size++] = (Char)(0xc0 | (code >> 6));
-    //                             value->ptr[value->size++] = (Char)(0x80 | (code & 0x3f));
-    //                         } else if (code <= 0xffff) {
-    //                             value->ptr[value->size++] = (Char)(0xe0 | (code >> 12));
-    //                             value->ptr[value->size++] = (Char)(0x80 | ((code >> 6) & 0x3f));
-    //                             value->ptr[value->size++] = (Char)(0x80 | (code & 0x3f));
-    //                         } else if (code <= 0x10ffff) {
-    //                             value->ptr[value->size++] = (Char)(0xf0 | (code >> 18));
-    //                             value->ptr[value->size++] = (Char)(0x80 | ((code >> 12) & 0x3f));
-    //                             value->ptr[value->size++] = (Char)(0x80 | ((code >> 6) & 0x3f));
-    //                             value->ptr[value->size++] = (Char)(0x80 | (code & 0x3f));
-    //                         } else {
-    //                             _error = (int32_t)error::invalid_unicode;
-    //                             return begin;
-    //                         }
-    //                     }
-    //                 }
-    //                 default: {
-    //                     ++begin;
-    //                     value->ptr[value->size++] = *begin;
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     ++begin;
-    //     return begin;
-    // }
-
-    // // 使用SSE优化的跳过空白字符函数
-    // template <class Iter1, class Iter2>
-    // constexpr inline Iter1 _skip_whitespace_sse(Iter1 begin, Iter2 end) {
-    //     // 检查是否支持足够的数据进行SIMD处理
-    //     if (std::distance(begin, end) >= 16) {
-    //         // 预定义的空白字符掩码 (基于skip_table)
-    //         // \t=9, \n=10, \r=13, space=32, ','=44
-    //         alignas(16) static constexpr uint8_t whitespace_mask[16] = {
-    //             0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0  // 前16个字符
-    //         };
-
-    //         // 加载掩码到SSE寄存器
-    //         __m128i mask = _mm_load_si128((__m128i const*)whitespace_mask);
-
-    //         while (std::distance(begin, end) >= 16) {
-    //             // 加载16个字符
-    //             __m128i data = _mm_loadu_si128((__m128i const*)begin);
-
-    //             // 查找空白字符 (使用shuffle技术)
-    //             __m128i shuffled = _mm_shuffle_epi8(mask, data);
-    //             __m128i is_whitespace = _mm_cmpeq_epi8(shuffled, _mm_set1_epi8(1));
-
-    //             // 检查是否有非空白字符
-    //             int mask_result = _mm_movemask_epi8(is_whitespace);
-    //             if (mask_result != 0xFFFF) {  // 如果不是所有字符都是空白
-    //                 // 找到第一个非空白字符的位置
-    //                 int first_non_whitespace = __builtin_ctz(~mask_result);
-    //                 std::advance(begin, first_non_whitespace);
-    //                 break;
-    //             }
-
-    //             // 全部是空白字符，跳过16个字符
-    //             std::advance(begin, 16);
-    //         }
-    //     }
-
-    //     // 处理剩余字符或小数据集
-    //     while (begin < end && skip_table[(uint8_t)*begin]) {
-    //         ++begin;
-    //     }
-
-    //     return begin;
-    // }
-
     template <class Iter1, class Iter2>
-    constexpr inline Iter1 _parse_string(string_view_t* value, Iter1 begin, Iter2 end) {
+    CONSTEXPR INLINE Iter1 _parse_string(string_view_t* value, Iter1 begin, Iter2 end) {
         ++begin;
 
-        // bool_t find{False};
         auto start = begin;
 
-        // __m128i escapes = _mm_set1_epi8('\\');
-        // __m128i quotes = _mm_set1_epi8('"');
-        // while (begin < end - 15) {
-        //     __m128i chunk = _mm_loadu_si128((__m128i*)begin);
-        //     __m128i has_escape = _mm_cmpeq_epi8(chunk, escapes);
-        //     auto has_escape_mask = _mm_movemask_epi8(has_escape);
-        //     if (has_escape_mask != 0x0000) {
-        //         auto first_escape = __builtin_ctz(~has_escape_mask);
-        //         begin += first_escape + 2;
-        //     } else {
-        //         __m128i has_quote = _mm_cmpeq_epi8(chunk, quotes);
-        //         auto has_quote_mask = _mm_movemask_epi8(has_quote);
-        //         if (has_quote_mask != 0x0000) {
-        //             auto first_quote = __builtin_ctz(has_quote_mask);
-        //             begin += first_quote;
-        //             *value = string_view_t(start, begin);
-        //             ++begin;
-        //             find = True;
-        //             break;
-        //         }
-        //         begin += 16;
-        //     }
-        // }
-
-        // if (!find) {
         while (begin < end) {
             if (*begin == '\\') {
                 ++begin;
@@ -1199,15 +1087,15 @@ protected:
             }
             ++begin;
         }
-        // }
 
         return begin;
     }
 
     template <class Iter1, class Iter2>
-    constexpr int32_t _call(json_type* json, Iter1 begin, Iter2 end, vector_t<impl_type>& layers) {
+    FORCE_INLINE CONSTEXPR int32_t
+    _call(json_type* json, Iter1 begin, Iter2 end, vector_t<impl_type>& layers) {
         while (begin < end && !_error) {
-            while (begin < end && skip_table[(uint8_t)*begin]) {
+            while (begin < end && skip_table[uint8_t(*begin)]) {
                 ++begin;
             }
 
@@ -1346,18 +1234,17 @@ protected:
                 } else if (*begin == '}') {
                     if (likely(layers.size() > 1u)) {
                         auto& object = _object_from_type(layers.back());
-                        json_type value(std::move(object), json->_allocator());
+                        json_type value(move(object), json->_allocator());
                         auto& __last_layer = layers[layers.size() - 2];
                         if (_is_object_from_type(__last_layer)) {
-                            _impl_emplace(__last_layer, _key_from_type(layers.back()),
-                                          std::move(value));
+                            _impl_emplace(__last_layer, _key_from_type(layers.back()), move(value));
                         } else {
-                            _impl_emplace(__last_layer, std::move(value));
+                            _impl_emplace(__last_layer, move(value));
                         }
                         layers.pop_back();
                     } else {
                         auto& object = _object_from_type(layers.front());
-                        *json = std::move(object);
+                        *json = move(object);
                     }
                     ++begin;
                 } else if (*begin == ']') {
@@ -1365,18 +1252,17 @@ protected:
                         json_type value(json->_allocator());
                         value._type = value_enum::array;
                         auto& array = _array_from_type(layers.back());
-                        new (&value._impl) array_type(std::move(array));
+                        new (&value._impl) array_type(move(array));
                         auto& __last_layer = layers[layers.size() - 2];
                         if (_is_object_from_type(__last_layer)) {
-                            _impl_emplace(__last_layer, _key_from_type(layers.back()),
-                                          std::move(value));
+                            _impl_emplace(__last_layer, _key_from_type(layers.back()), move(value));
                         } else {
-                            _impl_emplace(__last_layer, std::move(value));
+                            _impl_emplace(__last_layer, move(value));
                         }
                         layers.pop_back();
                     } else {
                         auto& array = _array_from_type(layers.front());
-                        *json = std::move(array);
+                        *json = move(array);
                     }
                     ++begin;
                 } else {
@@ -1394,35 +1280,26 @@ public:
     constexpr parser(size_type capacity) noexcept : _capacity(capacity) {}
 
     template <class Iter1, class Iter2>
-    int32_t operator()(json_type* json, Iter1 begin, Iter2 end) {
-        int32_t result{0u};
-        bool_t find{False};
-
-        // 最后回退到栈分配
-        if (!find) {
-            vector_t<impl_type> layers(_capacity);
-            result = _call(json, begin, end, layers);
-        }
-        return result;
+    FORCE_INLINE CONSTEXPR int32_t operator()(json_type* json, Iter1 begin, Iter2 end) {
+        vector_t<impl_type> layers(_capacity, json->_allocator());
+        return _call(json, begin, end, layers);
     }
 };
 
-template <class Char, memory_policy_t Policy, class Allocator>
-constexpr bool_t parser<Char, Policy, Allocator>::skip_table[256];
+template <class Json>
+constexpr bool_t parser<Json>::skip_table[256];
 
-template <class Char, memory_policy_t Policy, class Allocator>
-constexpr bool_t parser<Char, Policy, Allocator>::end_table[256];
+template <class Json>
+constexpr bool_t parser<Json>::end_table[256];
 
-template <class Iter1, class Iter2, class Char, memory_policy_t Policy, class Allocator>
-INLINE constexpr int32_t parse(value<Char, Policy, Allocator>* json,
-                               Iter1 begin,
-                               Iter2 end) noexcept {
-    parser<Char, Policy, Allocator> parser;
+template <class Iter1, class Iter2, class Json>
+FORCE_INLINE CONSTEXPR int32_t parse(Json* json, Iter1 begin, Iter2 end) noexcept {
+    parser<Json> parser;
     return parser(json, begin, end);
 }
 
 #ifdef _GLIBCXX_FSTREAM
-template <class Char, memory_policy_t Policy, class Allocator>
+template <class Char, memory_policy Policy, class Allocator>
 INLINE constexpr int32_t parse(value<Char, Policy, Allocator>* ptr,
                                std::basic_ifstream<Char> const& stream) noexcept {
     int32_t result{0};
@@ -1441,23 +1318,24 @@ INLINE constexpr int32_t parse(value<Char, Policy, Allocator>* ptr,
     return result;
 }
 
-template <class Char, memory_policy_t Policy, class Allocator>
+template <class Char, memory_policy Policy, class Allocator>
 INLINE int32_t parse(value<Char, Policy, Allocator>* ptr, string_view_t file) noexcept {
     return parse(ptr, std::basic_ifstream<Char>{file});
 }
 #endif
 
-template <class OutStream, class Char, memory_policy_t Policy, class Allocator>
-inline OutStream& operator<<(OutStream& out, value<Char, Policy, Allocator> const& value) {
+template <class OutStream, class Char, memory_policy Policy, class Allocator>
+INLINE OutStream& operator<<(OutStream& out, value<Char, Policy, Allocator> const& value) {
     value.to(out);
     return out;
 }
 
 };  // namespace json
 
-using json_t = json::value<char, json::memory_policy_t::copy>;
-using json_view_t = json::value<char, json::memory_policy_t::view>;
-using json_pool_t = json::value<char, json::memory_policy_t::copy, pool_allocator_t>;
-using json_view_pool_t = json::value<char, json::memory_policy_t::view, pool_allocator_t>;
+using memory_policy_t = json::memory_policy;
+using json_t = json::value<char, json::memory_policy::copy>;
+using json_view_t = json::value<char, json::memory_policy::view>;
+using json_pool_t = json::value<char, json::memory_policy::copy, pool_allocator_t>;
+using json_view_pool_t = json::value<char, json::memory_policy::view, pool_allocator_t>;
 
 };  // namespace qlib

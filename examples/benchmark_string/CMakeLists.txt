@@ -17,28 +17,9 @@ target_link_libraries(${TARGET_NAME} PRIVATE
     -lbenchmark
 )
 
-# target_compile_options(${TARGET_NAME} PRIVATE
-#     $<$<CONFIG:Release>:-O3 -march=native -DNDEBUG
-#         -funroll-loops
-#         -ffast-math          # 如果适用（JSON解析通常不涉及浮点运算）
-#         -fomit-frame-pointer
-#     >
-# )
-
-# include(CheckIPOSupported)
-# check_ipo_supported(RESULT ipo_supported OUTPUT ipo_output)
-
-# if(ipo_supported)
-#     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
-#     # 设置 LTO 并行作业数
-#     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-#         # 对于 GCC，设置并行 LTO 作业
-#         set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -flto=auto")
-#     elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-#         # 对于 Clang，启用并行 LTO
-#         set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -flto=thin")
-#     endif()
-# endif()
+target_compile_options(${TARGET_NAME} PRIVATE
+    -Wall -march=native -O3
+)
 
 if(MSVC)
     target_compile_options(${TARGET_NAME} PRIVATE /utf-8)

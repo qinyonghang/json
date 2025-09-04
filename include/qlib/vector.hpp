@@ -2,9 +2,6 @@
 
 #define VECTOR_IMPLEMENTATION
 
-#include <cstring>
-// #include <functional>
-
 #include "qlib/memory.h"
 #include "qlib/object.h"
 
@@ -64,89 +61,81 @@ protected:
     INLINE void _update_capacity(size_type capacity) {
         auto impl = _allocator().template allocate<value_type>(capacity);
         // ++_count;
-        if CONSTEXPR (std::is_trivially_copyable<value_type>::value) {
-            std::memcpy(impl, _impl, _size * sizeof(value_type));
+        if CONSTEXPR (is_trivially_copyable_v<value_type>) {
+            __builtin_memmove(impl, _impl, _size * sizeof(value_type));
         } else {
             for (size_type i = 0; i < _size; ++i) {
-                _allocator().construct(impl + i, std::move(_impl[i]));
+                _allocator().construct(impl + i, move(_impl[i]));
                 _allocator().destroy(_impl + i);
             }
         }
-        // std::memcpy(impl, _impl, sizeof(value_type) * _size);
         _allocator().template deallocate<value_type>(_impl, _capacity);
         _impl = impl;
         _capacity = capacity;
     }
 
 public:
-    INLINE constexpr value() noexcept(std::is_nothrow_constructible<allocator_type>::value) =
-        default;
+    INLINE constexpr value() noexcept(is_nothrow_constructible_v<base>) = default;
 
     INLINE constexpr explicit value(allocator_type& allocator) noexcept(
-        std::is_nothrow_constructible<allocator_type>::value)
+        is_nothrow_constructible_v<base>)
             : base(allocator) {}
 
-    INLINE constexpr explicit value(size_type capacity) noexcept(
-        std::is_nothrow_constructible<allocator_type>::value)
+    INLINE constexpr explicit value(size_type capacity) noexcept(is_nothrow_constructible_v<base>)
             : _capacity(capacity) {
         _impl = _allocator().template allocate<value_type>(capacity);
     }
 
     INLINE constexpr explicit value(size_type capacity, allocator_type& allocator) noexcept(
-        std::is_nothrow_constructible<allocator_type>::value)
+        is_nothrow_constructible_v<base>)
             : base(allocator), _capacity(capacity) {
         _impl = _allocator().template allocate<value_type>(capacity);
     }
 
-    INLINE value(value const& other) noexcept
-            : base(other), _size(other._size), _capacity(other._capacity) {
+    INLINE value(value const& other) : base(other), _size(other._size), _capacity(other._capacity) {
         if (likely(_size > 0)) {
             _impl = _allocator().template allocate<value_type>(_capacity);
-            if CONSTEXPR (std::is_trivially_copyable<value_type>::value) {
-                std::memcpy(_impl, other._impl, _size * sizeof(value_type));
+            if CONSTEXPR (is_trivially_copyable_v<value_type>) {
+                __builtin_memmove(_impl, other._impl, _size * sizeof(value_type));
             } else {
                 size_type i = 0;
-                // try {
-                for (; i < _size; ++i) {
-                    _allocator().construct(_impl + i, other._impl[i]);
+                try {
+                    for (; i < _size; ++i) {
+                        _allocator().construct(_impl + i, other._impl[i]);
+                    }
+                } catch (...) {
+                    for (size_type j = 0; j < i; ++j) {
+                        _allocator().destroy(_impl + j);
+                    }
+                    _allocator().template deallocate<value_type>(_impl, _size);
+                    _impl = nullptr;
+                    _size = 0;
+                    _capacity = 0;
+                    throw;
                 }
-                // } catch (...) {
-                //     for (size_type j = 0; j < i; ++j) {
-                //         _allocator().destroy(_impl + j);
-                //     }
-                //     _allocator().template deallocate<value_type>(_impl, _size);
-                //     _impl = nullptr;
-                //     _size = 0;
-                //     _capacity = 0;
-                //     throw;
-                // }
             }
         }
     }
 
     INLINE constexpr value(value&& other) noexcept
-            : base(std::move(other)), _impl(other._impl), _size(other._size),
+            : base(move(other)), _impl(other._impl), _size(other._size),
               _capacity(other._capacity) {
         other._impl = nullptr;
         other._size = 0;
         other._capacity = 0;
     }
 
-    INLINE ~value() noexcept(std::is_nothrow_destructible<allocator_type>::value) {
+    INLINE ~value() noexcept(is_nothrow_destructible_v<allocator_type>) {
         for (size_type i = 0; i < _size; ++i) {
             _allocator().destroy(_impl + i);
         }
-        // std::cout << "count:" << _count << std::endl;
-        // std::cout << "size:" << _size << std::endl;
-        // std::cout << "capacity:" << _capacity << std::endl;
         _allocator().template deallocate<value_type>(_impl, _capacity);
         _impl = nullptr;
         _size = 0;
         _capacity = 0;
     }
 
-    INLINE self& operator=(self const& other) noexcept(
-        std::is_nothrow_constructible<allocator_type>::value) {
+    INLINE self& operator=(self const& other) noexcept(is_nothrow_constructible_v<base>) {
         if (likely(this != &other)) {
             this->~value();
             new (this) self(other);
@@ -156,7 +145,7 @@ public:
 
     INLINE self& operator=(self&& other) noexcept {
         this->~value();
-        new (this) self(std::move(other));
+        new (this) self(move(other));
         return *this;
     }
 
@@ -178,64 +167,36 @@ public:
     INLINE constexpr const_iterator begin() const noexcept { return _impl; }
     INLINE constexpr const_pointer end() const noexcept { return _impl + _size; }
 
-    INLINE constexpr reference operator[](size_type index) {
-        if (unlikely(index >= _size)) {
-            throw out_of_range();
-        }
-        return _impl[index];
-    }
+    INLINE constexpr reference operator[](size_type index) { return _impl[index]; }
 
     INLINE constexpr const_reference operator[](size_type index) const {
-        if (unlikely(index >= _size)) {
-            throw out_of_range();
-        }
-        return _impl[index];
+        return const_cast<self&>(*this)[index];
     }
 
-    INLINE constexpr reference front() {
-        if (unlikely(size() <= 0u)) {
-            throw out_of_range{};
-        }
-        return _impl[0];
-    }
-    INLINE constexpr reference back() {
-        if (unlikely(_size <= 0)) {
-            throw out_of_range();
-        }
-        return _impl[_size - 1];
-    }
-    INLINE constexpr const_reference front() const {
-        if (unlikely(size() <= 0u)) {
-            throw out_of_range();
-        }
-        return _impl[0];
-    }
-    INLINE constexpr const_reference back() const {
-        if (unlikely(_size <= 0)) {
-            throw out_of_range();
-        }
-        return _impl[_size - 1];
-    }
+    INLINE constexpr reference front() { return _impl[0]; }
+    INLINE constexpr reference back() { return _impl[_size - 1]; }
+    INLINE constexpr const_reference front() const { return const_cast<self&>(*this).front(); }
+    INLINE constexpr const_reference back() const { return const_cast<self&>(*this).back(); }
 
     template <class... Args>
     INLINE constexpr void emplace_back(Args&&... args) noexcept(
-        std::is_nothrow_constructible<value_type>::value) {
+        is_nothrow_constructible_v<value_type, Args...>) {
         size_type capacity = _size + 1u;
         if (unlikely(capacity > _capacity)) {
             capacity = capacity * 2u;
             _update_capacity(capacity);
         }
-        _allocator().construct(_impl + _size, std::forward<Args>(args)...);
+        _allocator().construct(_impl + _size, forward<Args>(args)...);
         ++_size;
     }
 
     template <class... Args>
     INLINE constexpr void push_back(Args&&... args) noexcept(
-        std::is_nothrow_constructible<value_type>::value) {
-        emplace_back(std::forward<Args>(args)...);
+        is_nothrow_constructible_v<value_type, Args...>) {
+        emplace_back(forward<Args>(args)...);
     }
 
-    INLINE constexpr void pop_back() noexcept(std::is_nothrow_destructible<value_type>::value) {
+    INLINE constexpr void pop_back() noexcept(is_nothrow_destructible_v<value_type>) {
         if (likely(_size > 0)) {
             _allocator().destroy(_impl + _size - 1);
             --_size;
